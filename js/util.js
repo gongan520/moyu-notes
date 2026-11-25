@@ -124,6 +124,31 @@ window.MY = window.MY || {};
   };
   A.sheet = Sheet;
 
+  /* ───────── 打开外部链接 ───────── */
+  A.openUrl = function (url) {
+    if (!url) return;
+    const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.moyuOpen;
+    if (bridge) {
+      try { bridge.postMessage({ url }); return; } catch (e) { }
+    }
+    try {
+      const w = window.open(url, '_blank');
+      if (w) return;
+    } catch (e) { }
+    // 弹窗被拦截时用临时 <a target="_blank"> 兜底，
+    // 千万不要退回 location.href —— 那会把笔记应用本身导航走
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { try { a.remove(); } catch (e) { } }, 0);
+    } catch (e) { }
+  };
+
   /* ───────── 文件 ───────── */
   A.download = function (blob, filename) {
     // iOS 原生壳：走系统分享面板（存到「文件」、发邮件等）

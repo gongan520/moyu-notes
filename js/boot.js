@@ -8,11 +8,17 @@
     A.Library.init();
     A.Studio.init();
 
-    A.Library.refresh().then(() => {
+    (async () => {
+      try { await A.dbReady; } catch (e) { }
+      // 本地库为空时，尝试从原生快照 / localStorage 快照回灌
+      try { await A.backup.restore(); } catch (e) { }
+      await A.Library.refresh();
       if (A.db.memoryOnly) {
         A.toast('当前环境不支持本地存储，请用 Safari 打开并「添加到主屏幕」', 4600);
+      } else {
+        A.backup.push();
       }
-    });
+    })();
 
     document.addEventListener('dragstart', e => e.preventDefault());
     document.addEventListener('gesturestart', e => e.preventDefault());

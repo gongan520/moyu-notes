@@ -25,6 +25,10 @@ img{-webkit-user-drag:none;}
   var last=-1, timer=0, sent=0;
   function measure(){
     var d=document.documentElement, b=document.body;
+    if(!d||!b) return;
+    // 文档刚开解析时 body 还是空的，此时 scrollHeight 等于视口高度，
+    // 会把「1000」当成内容高度报出去，导致分页算错。等有内容再量。
+    if(!b.firstElementChild) return;
     var h=Math.max(
       d?d.scrollHeight:0, d?d.offsetHeight:0,
       b?b.scrollHeight:0, b?b.offsetHeight:0,
@@ -72,12 +76,18 @@ img{-webkit-user-drag:none;}
       setTimeout(measure, 30);
     }
   });
-  // 拦截外链与表单，避免把笔记页导航走
+  // 拦截外链与表单，避免把笔记页导航走；锚点交给父页面做跨页跳转
   document.addEventListener('click', function(ev){
     var a=ev.target && ev.target.closest ? ev.target.closest('a') : null;
     if(!a) return;
     var href=a.getAttribute('href')||'';
-    if(href.charAt(0)==='#' || href==='') return;
+    if(href==='') return;
+    if(href.charAt(0)==='#'){
+      // 锚点统一交给父页面处理：编辑模式换页，阅读模式滚容器
+      ev.preventDefault();
+      try{ parent.postMessage({__moyu_hash:decodeURIComponent(href.slice(1))},'*'); }catch(e){}
+      return;
+    }
     ev.preventDefault();
     try{ parent.postMessage({__moyu_link:href},'*'); }catch(e){}
   }, true);
@@ -100,6 +110,8 @@ img{-webkit-user-drag:none;}
     const inject = [];
     if (!/<meta[^>]+name=["']?viewport/i.test(html)) inject.push(VIEWPORT);
     inject.push('<style id="__moyu_base">' + BASE_CSS + '</style>');
+    // 阅读模式：整篇连续显示，锚点/链接走浏览器原生行为
+    if (opts.reader) inject.push('<script>window.__MOYU_READER__=true;<\/script>');
     // 分页偏移：把整份文档往上推，让本页只露出自己的那一段
     if (opts.offsetY && opts.offsetY > 0) {
       inject.push('<style id="__moyu_offset">body{position:relative;top:-' + opts.offsetY + 'px;}</style>');
@@ -132,34 +144,37 @@ img{-webkit-user-drag:none;}
    * 挂载到 iframe
    * @param {HTMLIFrameElement} frame
    * @param {string} source 原始 HTML
-   * @param {{onHeight:Function,onLink:Function,onReady:Function}} cbs
+   * @param {{onHeight:Function,onLink:Function,onHash:Function,onReady:Function}} cbs
    */
+  // 常驻路由：同一份文档在写笔记期间会一直发消息（高度、链接、锚点），
+  // 不能像以前那样 mount 完成后就把监听摘掉，否则之后的点击全部失效。
+  const routed = new Map();
+
+  window.addEventListener('message', (e) => {
+    const entry = routed.get(e.source);
+    if (!entry) return;
+    const d = e.data;
+    if (!d || typeof d !== 'object') return;
+    if (typeof d.__moyu_h === 'number') {
+      if (entry.onHeight) entry.onHeight(d.__moyu_h);
+    } else if (d.__moyu_link) {
+      if (entry.onLink) entry.onLink(d.__moyu_link);
+    } else if (d.__moyu_hash) {
+      if (entry.onHash) entry.onHash(d.__moyu_hash);
+    }
+  });
+
   function mount(frame, source, cbs) {
     cbs = cbs || {};
     return new Promise((resolve) => {
       let done = false;
       let lastH = 0;
-      function cleanup() {
-        window.removeEventListener('message', onMsg);
-        frame.removeEventListener('load', onLoad);
-      }
       function finish() {
         if (done) return;
         done = true;
-        cleanup();
+        frame.removeEventListener('load', onLoad);
         if (cbs.onReady) cbs.onReady();
         resolve(lastH || 0);
-      }
-      function onMsg(e) {
-        if (e.source && frame.contentWindow && e.source !== frame.contentWindow) return;
-        const d = e.data;
-        if (!d || typeof d !== 'object') return;
-        if (typeof d.__moyu_h === 'number') {
-          lastH = d.__moyu_h;
-          if (cbs.onHeight) cbs.onHeight(d.__moyu_h);
-        } else if (d.__moyu_link) {
-          if (cbs.onLink) cbs.onLink(d.__moyu_link);
-        }
       }
       function onLoad() {
         // 兜底：直接读一次（同源 srcdoc 可访问）
@@ -179,7 +194,19 @@ img{-webkit-user-drag:none;}
         setTimeout(finish, 320);
       }
 
-      window.addEventListener('message', onMsg);
+      // 注册常驻路由（覆盖同一 frame 上的上一次注册）
+      try {
+        const win = frame.contentWindow;
+        if (win) {
+          routed.set(win, {
+            frame: frame,
+            onHeight: (h) => { lastH = h; if (cbs.onHeight) cbs.onHeight(h); },
+            onLink: cbs.onLink,
+            onHash: cbs.onHash
+          });
+        }
+      } catch (e) { }
+
       frame.addEventListener('load', onLoad);
       frame.srcdoc = prepare(source, { offsetY: cbs.offsetY || 0 });
       // 极端情况下 load 不触发

@@ -6,6 +6,9 @@
 
   const S = {
     books: [],
+    folders: [],
+    folderId: 'root',
+    starOnly: false,
     sort: 'updated',
     q: '',
     ready: false
@@ -136,11 +139,30 @@
   }
 
   /* ───── 渲染列表 ───── */
+  function inFolder(b) {
+    const f = b.folderId || 'root';
+    return f === S.folderId;
+  }
+
+  function subFolders() {
+    return S.folders
+      .filter(f => (f.parentId || 'root') === S.folderId)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+  }
+
+  function countIn(id) {
+    return S.books.filter(b => (b.folderId || 'root') === id).length;
+  }
+
   function sorted() {
-    let list = S.books.slice();
+    let list = S.books.filter(inFolder);
+    if (S.starOnly) list = list.filter(b => b.starred);
     if (S.q) {
       const q = S.q.toLowerCase();
-      list = list.filter(b => (b.name || '').toLowerCase().indexOf(q) >= 0);
+      list = list.filter(b => {
+        if ((b.name || '').toLowerCase().indexOf(q) >= 0) return true;
+        return (b.tags || []).some(t => String(t).toLowerCase().indexOf(q) >= 0);
+      });
     }
     if (S.sort === 'updated') list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     else if (S.sort === 'created') list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -148,26 +170,88 @@
     return list;
   }
 
+  /* ───── 面包屑 ───── */
+  function trail() {
+    const out = [];
+    let cur = S.folders.find(f => f.id === S.folderId);
+    let guard = 0;
+    while (cur && guard++ < 20) {
+      out.unshift(cur);
+      cur = S.folders.find(f => f.id === (cur.parentId || 'root'));
+      if (cur && cur.id === S.folderId) break;
+    }
+    return out;
+  }
+
+  function renderNav() {
+    const nav = A.$('#libNav');
+    if (!nav) return;
+    const t = trail();
+    let html = '<div class="crumb-trail">';
+    html += '<button class="crumb-seg" data-fid="root">书架</button>';
+    t.forEach((f, i) => {
+      html += '<span class="crumb-sep">/</span>';
+      html += i === t.length - 1
+        ? '<span class="crumb-cur">' + esc(f.name) + '</span>'
+        : '<button class="crumb-seg" data-fid="' + f.id + '">' + esc(f.name) + '</button>';
+    });
+    html += '</div><div class="lib-nav-acts">';
+    html += '<button class="chip-f" id="btnNewFolder">新建文件夹</button>';
+    html += '<button class="chip-f' + (S.starOnly ? ' is-on' : '') + '" id="btnStarFilter">★ 收藏</button>';
+    html += '</div>';
+    nav.innerHTML = html;
+
+    A.$$('.crumb-seg', nav).forEach(b => b.addEventListener('click', () => {
+      S.folderId = b.dataset.fid;
+      render();
+    }));
+    const nf = A.$('#btnNewFolder', nav);
+    if (nf) nf.addEventListener('click', newFolder);
+    const sf = A.$('#btnStarFilter', nav);
+    if (sf) sf.addEventListener('click', () => {
+      S.starOnly = !S.starOnly;
+      render();
+    });
+  }
+
   function render() {
     const grid = A.$('#libGrid');
     const empty = A.$('#libEmpty');
     if (!grid) return;
+    renderNav();
     const list = sorted();
+    const subs = subFolders();
 
-    if (!S.books.length) {
+    if (!S.books.length && !S.folders.length) {
       grid.innerHTML = '';
       empty.classList.add('is-on');
       return;
     }
     empty.classList.remove('is-on');
-    if (!list.length) {
-      grid.innerHTML = '<div style="grid-column:1/-1;padding:60px 0;text-align:center;color:#70707c;font-size:14px">没有匹配的笔记</div>';
+    if (!list.length && !subs.length) {
+      grid.innerHTML = '<div style="grid-column:1/-1;padding:60px 0;text-align:center;color:#70707c;font-size:14px">' +
+        (S.q ? '没有匹配的笔记' : '这个文件夹是空的') + '</div>';
       return;
     }
 
     grid.innerHTML = '';
     const frag = document.createDocumentFragment();
-    list.forEach((book, idx) => {
+
+    subs.forEach(f => {
+      const card = A.el('div', 'book is-folder');
+      card.dataset.fid = f.id;
+      card.innerHTML =
+        '<div class="folder-tile"><div class="folder-shape">' +
+        '<svg viewBox="0 0 24 24" class="ico"><path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.6 2h8.2a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-10z"/></svg>' +
+        '</div><div class="folder-count">' + countIn(f.id) + ' 本</div></div>' +
+        '<div class="book-meta"><div class="book-name">' + esc(f.name) + '</div>' +
+        '<div class="book-time">文件夹</div></div>';
+      card.addEventListener('click', () => { S.folderId = f.id; render(); });
+      card.addEventListener('contextmenu', (e) => { e.preventDefault(); folderMenu(f); });
+      frag.appendChild(card);
+    });
+
+    list.forEach((book) => {
       const card = A.el('div', 'book');
       card.dataset.id = book.id;
       const cover = A.el('div', 'book-cover');
@@ -179,14 +263,20 @@
         badge.textContent = 'HTML';
         cover.appendChild(badge);
       }
+      if (book.starred) {
+        const st = A.el('div', 'cover-star');
+        st.textContent = '★';
+        cover.appendChild(st);
+      }
       card.appendChild(cover);
       const meta = A.el('div', 'book-meta');
+      const tags = (book.tags || []).slice(0, 2).map(t => '<span class="tag-mini">' + esc(t) + '</span>').join('');
       meta.innerHTML = '<div class="book-name">' + esc(book.name || '未命名') + '</div>' +
+        (tags ? '<div class="book-tags">' + tags + '</div>' : '') +
         '<div class="book-time">' + A.fmtAgo(book.updatedAt || book.createdAt || Date.now()) + ' · ' + (book.pageCount || 1) + ' 页</div>';
       card.appendChild(meta);
       frag.appendChild(card);
 
-      // 绘制封面
       requestAnimationFrame(() => paintCover(cv, book));
     });
     grid.appendChild(frag);
@@ -202,6 +292,7 @@
   function bindCards() {
     A.$$('.book', document.getElementById('libGrid')).forEach(card => {
       const id = card.dataset.id;
+      if (!id) return;
       let pressTimer = 0, longFired = false;
 
       card.addEventListener('pointerdown', (e) => {
@@ -236,6 +327,9 @@
     node.innerHTML = [
       '<div class="list">',
       '<button class="list-item" data-act="open"><svg class="ico" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 015.5 4H11v16H5.5A1.5 1.5 0 014 18.5v-13z"/><path d="M20 5.5A1.5 1.5 0 0018.5 4H13v16h5.5A1.5 1.5 0 0020 18.5v-13z"/></svg><span class="li-grow">打开</span></button>',
+      '<button class="list-item" data-act="star"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4l2.5 5.3 5.5.8-4 3.9 1 5.5-5-2.8-5 2.8 1-5.5-4-3.9 5.5-.8z"/></svg><span class="li-grow">' + (book.starred ? '取消收藏' : '收藏') + '</span></button>',
+      '<button class="list-item" data-act="move"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.6 2h8.2a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-10z"/></svg><span class="li-grow">移动到文件夹</span></button>',
+      '<button class="list-item" data-act="tags"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h9l7 6-7 6H4z"/><circle cx="8" cy="12" r="1.4"/></svg><span class="li-grow">编辑标签</span></button>',
       '<button class="list-item" data-act="rename"><svg class="ico" viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg><span class="li-grow">重命名</span></button>',
       '<button class="list-item" data-act="dup"><svg class="ico" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/></svg><span class="li-grow">复制一本</span></button>',
       '<button class="list-item" data-act="export"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4v10m0 0l-3.5-3.5M12 14l3.5-3.5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg><span class="li-grow">导出 PDF</span></button>',
@@ -246,14 +340,22 @@
 
     A.sheet.open({
       title: esc(book.name),
-      sub: (book.pageCount || 1) + ' 页',
+      sub: (book.pageCount || 1) + ' 页' + ((book.tags || []).length ? ' · ' + book.tags.join(' / ') : ''),
       node: node,
       onMount: (body, sheet) => {
         A.$$('.list-item', body).forEach(btn => {
           btn.addEventListener('click', async () => {
             const act = btn.dataset.act;
+            if (act === 'tags') { sheet.close(); setTimeout(() => editTags(book), 220); return; }
+            if (act === 'move') { sheet.close(); setTimeout(() => moveBookTo(book), 220); return; }
             sheet.close();
             if (act === 'open') A.Studio.openBook(id);
+            else if (act === 'star') {
+              book.starred = !book.starred;
+              await A.db.saveBook(book);
+              await refresh();
+              A.toast(book.starred ? '已收藏' : '已取消收藏');
+            }
             else if (act === 'rename') renameBook(book);
             else if (act === 'dup') dupBook(book);
             else if (act === 'export') {
@@ -326,6 +428,112 @@
     });
   }
 
+  /* ── 文件夹 ── */
+  function promptText(title, label, value, okText) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const node = A.el('div');
+      node.innerHTML = '<div class="field"><label>' + label + '</label><input type="text" id="txtIn" value="' + esc(value || '') + '"></div>' +
+        '<div class="sheet-actions"><button class="btn btn--ghost" id="txtCancel">取消</button><button class="btn btn--solid" id="txtOk">' + (okText || '保存') + '</button></div>';
+      const done = (v) => { if (settled) return; settled = true; resolve(v); };
+      A.sheet.open({
+        title,
+        node,
+        onClose: () => done(null),
+        onMount: (body) => {
+          const input = A.$('#txtIn', body);
+          setTimeout(() => { input.focus(); input.select(); }, 260);
+          const ok = () => {
+            const v = input.value.trim();
+            done(v || null);
+            A.sheet.close();
+          };
+          A.$('#txtOk', body).addEventListener('click', ok);
+          A.$('#txtCancel', body).addEventListener('click', () => { done(null); A.sheet.close(); });
+          input.addEventListener('keydown', e => { if (e.key === 'Enter') ok(); });
+        }
+      });
+    });
+  }
+
+  async function newFolder() {
+    const name = await promptText('新建文件夹', '文件夹名称', '新文件夹', '创建');
+    if (!name) return;
+    await A.db.saveFolder({ id: A.uid('fd'), name, parentId: S.folderId, createdAt: A.now() });
+    await refresh();
+    A.toast('已创建文件夹');
+  }
+
+  function folderMenu(f) {
+    const node = A.el('div');
+    node.innerHTML = '<div class="list">' +
+      '<button class="list-item" data-act="rename"><svg class="ico" viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg><span class="li-grow">重命名</span></button>' +
+      '<button class="list-item is-danger" data-act="del"><svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/></svg><span class="li-grow">删除文件夹<span class="li-sub">里面的笔记会退回上一级</span></span></button>' +
+      '</div>';
+    A.sheet.open({
+      title: esc(f.name),
+      node,
+      onMount: (body, sheet) => {
+        A.$$('.list-item', body).forEach(b => b.addEventListener('click', async () => {
+          const act = b.dataset.act;
+          sheet.close();
+          if (act === 'rename') {
+            const name = await promptText('重命名文件夹', '文件夹名称', f.name);
+            if (!name) return;
+            f.name = name;
+            await A.db.saveFolder(f);
+            await refresh();
+          } else if (act === 'del') {
+            for (const bk of S.books.filter(x => (x.folderId || 'root') === f.id)) {
+              bk.folderId = f.parentId || 'root';
+              await A.db.saveBook(bk);
+            }
+            for (const sub of S.folders.filter(x => (x.parentId || 'root') === f.id)) {
+              sub.parentId = f.parentId || 'root';
+              await A.db.saveFolder(sub);
+            }
+            await A.db.deleteFolder(f.id);
+            if (S.folderId === f.id) S.folderId = f.parentId || 'root';
+            await refresh();
+            A.toast('文件夹已删除');
+          }
+        }));
+      }
+    });
+  }
+
+  async function moveBookTo(book) {
+    const options = [{ id: 'root', name: '全部笔记' }].concat(S.folders.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh')));
+    const node = A.el('div');
+    node.innerHTML = '<div class="list">' + options.map(f =>
+      '<button class="list-item" data-fid="' + f.id + '"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.6 2h8.2a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-10z"/></svg><span class="li-grow">' +
+      esc(f.name) + (book.folderId === f.id || (!book.folderId && f.id === 'root') ? '<span class="li-sub">当前位置</span>' : '') + '</span></button>'
+    ).join('') + '</div>';
+    A.sheet.open({
+      title: '移动到',
+      node,
+      onMount: (body, sheet) => {
+        A.$$('.list-item', body).forEach(b => b.addEventListener('click', async () => {
+          book.folderId = b.dataset.fid;
+          book.updatedAt = A.now();
+          await A.db.saveBook(book);
+          sheet.close();
+          await refresh();
+          A.toast('已移动');
+        }));
+      }
+    });
+  }
+
+  async function editTags(book) {
+    const name = await promptText('笔记标签', '用逗号分隔多个标签', (book.tags || []).join('，'), '保存');
+    if (name === null) return;
+    book.tags = String(name).split(/[,，\s]+/).map(s => s.trim()).filter(Boolean).slice(0, 6);
+    book.updatedAt = A.now();
+    await A.db.saveBook(book);
+    await refresh();
+  }
+
   /* ───── 新建 / 导入 ───── */
   async function newBook(preset) {
     const now = A.now();
@@ -336,7 +544,8 @@
       updatedAt: now,
       accent: ACCENTS[Math.floor(Math.random() * ACCENTS.length)],
       isHtml: false,
-      pageCount: 1
+      pageCount: 1,
+      folderId: S.folderId
     };
     const page = A.Studio.blankPage(book.id, 0, preset);
     await A.db.saveBook(book);
@@ -389,6 +598,9 @@
       }
     }
     S.books = list;
+    try { S.folders = await A.db.allFolders(); } catch (e) { S.folders = []; }
+    if (S.folderId !== 'root' && !S.folders.some(f => f.id === S.folderId)) S.folderId = 'root';
+    if (A.backup) A.backup.writeMeta(list);
     render();
     updateFoot();
   }

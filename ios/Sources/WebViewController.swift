@@ -6,6 +6,7 @@ final class WebViewController: UIViewController {
     private var webView: WKWebView!
     private var server: LocalHTTPServer?
     private var bridge: Bridge?
+    private var backupBridge: BackupBridge?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -19,10 +20,24 @@ final class WebViewController: UIViewController {
         }
 
         let controller = WKUserContentController()
+
+        // 关键：在页面脚本执行之前把上次的原生快照注入进去，
+        // 由 backup.js 判断本地库是否为空并自动回灌。
+        if let script = BackupStore.shared.injectedScript() {
+            controller.addUserScript(WKUserScript(source: script,
+                                                  injectionTime: .atDocumentStart,
+                                                  forMainFrameOnly: true))
+        }
+
         let br = Bridge(host: self)
         controller.add(br, name: "moyuSave")
+        controller.add(br, name: "moyuOpen")
         config.userContentController = controller
         self.bridge = br
+
+        let bb = BackupBridge()
+        controller.add(bb, name: "moyuBackup")
+        self.backupBridge = bb
 
         webView = WKWebView(frame: view.bounds, configuration: config)
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -125,6 +140,17 @@ final class Bridge: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ userContentController: WKUserContentController,
                                didReceive message: WKScriptMessage) {
+        // 在系统浏览器里打开外部链接（笔记里的 <a href="https://...">）
+        if message.name == "moyuOpen" {
+            guard let dict = message.body as? [String: Any],
+                  let s = dict["url"] as? String,
+                  let url = URL(string: s) else { return }
+            DispatchQueue.main.async {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+            return
+        }
+
         guard message.name == "moyuSave",
               let dict = message.body as? [String: Any],
               let name = dict["name"] as? String,

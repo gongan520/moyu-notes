@@ -6,10 +6,10 @@
   'use strict';
 
   const DB_NAME = 'moyu_note';
-  const DB_VER = 2;
+  const DB_VER = 3;
   let db = null;
   let memoryOnly = false;
-  const mem = { books: new Map(), pages: new Map(), assets: new Map() };
+  const mem = { books: new Map(), pages: new Map(), assets: new Map(), folders: new Map() };
 
   function req(r) {
     return new Promise((res, rej) => {
@@ -45,6 +45,9 @@
           }
           if (!d.objectStoreNames.contains('assets')) {
             d.createObjectStore('assets', { keyPath: 'key' });
+          }
+          if (!d.objectStoreNames.contains('folders')) {
+            d.createObjectStore('folders', { keyPath: 'id' });
           }
         };
         r.onsuccess = () => {
@@ -82,6 +85,8 @@
     },
 
     async deleteBook(id) {
+      // 告知快照层：这是用户主动删除，允许把「空库」写进快照
+      if (A.backup) A.backup.noteDelete();
       if (memoryOnly) {
         mem.books.delete(id);
         for (const [pid, p] of mem.pages) if (p.bookId === id) mem.pages.delete(pid);
@@ -163,15 +168,62 @@
       try { await req(tx('assets', 'readwrite').delete(key)); } catch (e) { }
     },
 
+    /* ───── 文件夹 ───── */
+    async allFolders() {
+      if (memoryOnly) return Array.from(mem.folders.values());
+      try { return await req(tx('folders', 'readonly').getAll()); } catch (e) { return []; }
+    },
+
+    async saveFolder(f) {
+      if (memoryOnly) { mem.folders.set(f.id, f); return f; }
+      try { await req(tx('folders', 'readwrite').put(f)); } catch (e) { }
+      return f;
+    },
+
+    async deleteFolder(id) {
+      if (memoryOnly) { mem.folders.delete(id); return; }
+      try { await req(tx('folders', 'readwrite').delete(id)); } catch (e) { }
+    },
+
     /* 全量导出 */
     async dumpAll() {
       const books = await this.allBooks();
-      const out = { format: 'moyu-backup', version: 1, exportedAt: Date.now(), books: [] };
+      const folders = await this.allFolders();
+      const out = { format: 'moyu-backup', version: 2, exportedAt: Date.now(), books: [], folders: folders, assets: {} };
+      const keys = new Set();
       for (const b of books) {
         const pages = await this.pagesOf(b.id);
+        pages.forEach(p => { if (p.srcKey) keys.add(p.srcKey); });
         out.books.push({ book: b, pages });
       }
+      for (const k of keys) {
+        const data = await this.getAsset(k);
+        if (data != null) out.assets[k] = data;
+      }
       return out;
+    },
+
+    /* 全量写回（从快照恢复） */
+    async restoreAll(snap) {
+      if (!snap || !Array.isArray(snap.books)) return 0;
+      let n = 0;
+      const assets = snap.assets || {};
+      for (const k of Object.keys(assets)) {
+        await this.putAsset(k, assets[k]);
+      }
+      if (Array.isArray(snap.folders)) {
+        for (const f of snap.folders) {
+          if (f && f.id) await this.saveFolder(f);
+        }
+      }
+      for (const entry of snap.books) {
+        if (!entry || !entry.book) continue;
+        await this.saveBook(entry.book);
+        const pages = Array.isArray(entry.pages) ? entry.pages : [];
+        if (pages.length) await this.savePages(pages);
+        n++;
+      }
+      return n;
     }
   };
 

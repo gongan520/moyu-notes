@@ -55,6 +55,8 @@
     srcCache: new Map(),
     quality: 2,
     htmlVisible: true,
+    ruler: { on: false, y: 260, angle: 0 },
+    picking: false,
     ready: false
   };
 
@@ -244,10 +246,8 @@
         A.HtmlPage.mount(D.frame, src, {
           offsetY: p.sliceTop || 0,
           onHeight: (h) => onHtmlHeight(h),
-          onLink: (href) => {
-            if (/^https?:/i.test(href)) A.toast('外部链接已拦截：' + href.slice(0, 42));
-            else if (href === 'form') A.toast('表单提交已禁用');
-          }
+          onLink: (href) => followLink(href),
+          onHash: (name) => jumpToAnchor(name)
         });
         D.curSrcKey = p.srcKey;
         D.frameMounted = !!src;
@@ -265,6 +265,10 @@
     renderImages();
     updateHtmlEye();
     syncToolUI();
+    if (S.ruler.on) {
+      S.ruler.y = A.clamp(S.ruler.y, 40, p.h - 40);
+      placeRuler();
+    }
   }
 
   function onHtmlHeight(h) {
@@ -277,9 +281,194 @@
     }
   }
 
+  /* ═════════════ 网页链接与跳转 ═════════════ */
+
+  /** 外部链接：交给系统浏览器 / 分享面板，绝不在应用内导航 */
+  function followLink(href) {
+    if (!href) return;
+    if (href === 'form') { A.toast('表单提交已禁用'); return; }
+    if (/^(https?:|mailto:|tel:)/i.test(href)) {
+      A.openUrl(href);
+      return;
+    }
+    if (/^#/.test(href)) { jumpToAnchor(decodeURIComponent(href.slice(1))); return; }
+    A.toast('相对链接需要原文的目录结构，暂不支持：' + href.slice(0, 30));
+  }
+
+  /** 锚点跳转：算出目标在整篇文档里的绝对位置，换到对应页再挪视野 */
+  function jumpToAnchor(name) {
+    const p = S.page;
+    if (!p || p.type !== 'html') { A.toast('当前页没有网页内容'); return; }
+    const doc = D.frame && D.frame.contentDocument;
+    if (!doc) { A.toast('网页还没准备好，稍后再试'); return; }
+    if (!name || name === 'top') {
+      goPage(0);
+      flashAnchor(0, 0, 0);
+      return;
+    }
+    let el = null;
+    try {
+      el = doc.getElementById(name) || doc.getElementsByName(name)[0] || null;
+    } catch (e) { el = null; }
+    if (!el) { A.toast('页内找不到「' + name + '」这个位置'); return; }
+
+    const r = el.getBoundingClientRect();
+    const docY = r.top + (p.sliceTop || 0);   // 文档内的绝对纵坐标
+
+    // 找出这个纵坐标落在哪一页
+    let idx = S.idx;
+    for (let i = 0; i < S.pages.length; i++) {
+      const pp = S.pages[i];
+      if (pp.type !== 'html') continue;
+      const top = pp.sliceTop || 0;
+      const bot = top + (pp.h || HTML_SLICE_H);
+      if (docY >= top && docY < bot) { idx = i; break; }
+    }
+    if (idx !== S.idx) goPage(idx);
+
+    const pageY = docY - (S.pages[idx].sliceTop || 0);
+    // 把目标挪到视野上方 1/6 处，留出上下文
+    const st = stageRect();
+    S.view.y = Math.min(st.height * 0.16, 120) - pageY * S.view.scale;
+    clampView();
+    flashAnchor(0, pageY, pageSize().w, r.height || 28);
+    A.toast('已跳到「' + name + '」');
+  }
+
+  /** 在页面上闪一个框，告诉用户目标在哪 */
+  function flashAnchor(x, y, w, h) {
+    if (!D.selSvg) return;
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x - 6);
+    rect.setAttribute('y', y - 4);
+    rect.setAttribute('width', Math.max(20, w + 12));
+    rect.setAttribute('height', Math.max(18, h + 8));
+    rect.setAttribute('rx', 6);
+    rect.setAttribute('fill', 'rgba(224,178,99,.16)');
+    rect.setAttribute('stroke', '#e0b263');
+    rect.setAttribute('stroke-width', '1.6');
+    rect.setAttribute('class', 'anchor-flash');
+    D.selSvg.appendChild(rect);
+    setTimeout(() => { try { rect.remove(); } catch (e) { } }, 1700);
+  }
+
+  /** 轻点（不是画）落在链接上时，跟随链接而不是留一个墨点 */
+  function probeLinkAt(pt) {
+    const p = S.page;
+    if (!p || p.type !== 'html' || !S.htmlVisible) return null;
+    const doc = D.frame && D.frame.contentDocument;
+    if (!doc || !doc.elementFromPoint) return null;
+    let el = null;
+    try { el = doc.elementFromPoint(pt.x, pt.y); } catch (e) { return null; }
+    if (!el || !el.closest) return null;
+    const a = el.closest('a[href]');
+    if (!a) return null;
+    return a.getAttribute('href') || null;
+  }
+
+  function tryTapLink(stroke) {
+    if (!stroke || !stroke.pts || stroke.pts.length > 6) return false;
+    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    for (const pt of stroke.pts) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+    if (maxX - minX > 8 || maxY - minY > 8) return false;
+    const href = probeLinkAt({ x: minX, y: minY });
+    if (!href) return false;
+    followLink(href);
+    return true;
+  }
+
   function pageSize() {
     const p = S.page;
     return { w: (p && p.w) || 794, h: (p && p.h) || 1123 };
+  }
+
+  /* ═════════════ 阅读模式 ═════════════ */
+
+  let readerOpen = false, readerScale = 1, readerStartY = 0, readerScrolled = false;
+
+  function openReader() {
+    const p = S.page;
+    if (!p) return;
+    const src = p.type === 'html' ? currentSrc() : null;
+    if (!src) { A.toast('只有导入的 HTML 笔记才有阅读模式'); return; }
+
+    const ov = A.$('#reader'), frame = A.$('#readerFrame');
+    const docBox = A.$('#readerDoc'), scroll = A.$('#readerScroll');
+    if (!ov || !frame || !docBox) return;
+
+    const title = A.$('#readerTitle');
+    if (title) title.textContent = (S.book && S.book.name) || '阅读';
+
+    const pw = p.w || 794;
+    readerScale = Math.min(1, (window.innerWidth - 2) / pw);
+    readerStartY = p.sliceTop || 0;
+    readerScrolled = false;
+
+    frame.style.width = pw + 'px';
+    frame.style.transform = 'scale(' + readerScale + ')';
+    frame.style.height = '200px';
+    docBox.style.height = '200px';
+    if (scroll) scroll.scrollTop = 0;
+
+    readerOpen = true;
+    ov.hidden = false;
+    ov.classList.add('is-on');
+    frame.srcdoc = A.HtmlPage.prepare(src, { reader: true });
+
+    setTimeout(readerFit, 350);
+    setTimeout(readerFit, 1100);
+    setTimeout(readerFit, 2400);
+  }
+
+  function readerFit() {
+    if (!readerOpen) return;
+    const frame = A.$('#readerFrame'), docBox = A.$('#readerDoc');
+    if (!frame || !docBox) return;
+    let h = 0;
+    try {
+      const d = frame.contentDocument;
+      if (d) {
+        h = Math.max(
+          d.documentElement ? d.documentElement.scrollHeight : 0,
+          d.body ? d.body.scrollHeight : 0
+        );
+      }
+    } catch (e) { }
+    if (!h || h < 40) return;
+    frame.style.height = h + 'px';
+    docBox.style.height = Math.ceil(h * readerScale) + 'px';
+    if (!readerScrolled) {
+      readerScrolled = true;
+      const sc = A.$('#readerScroll');
+      if (sc && readerStartY > 0) {
+        sc.scrollTop = Math.max(0, readerStartY * readerScale - 8);
+      }
+    }
+  }
+
+  /** 阅读模式下的锚点：滚动外层容器（iframe 自身高度等于全文，没有内滚动） */
+  function readerScrollTo(name) {
+    const frame = A.$('#readerFrame'), sc = A.$('#readerScroll');
+    if (!frame || !sc) return;
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    let el = null;
+    try { el = doc.getElementById(name) || doc.getElementsByName(name)[0] || null; } catch (e) { el = null; }
+    if (!el) return;
+    const y = el.getBoundingClientRect().top;   // iframe 未内滚，即文档内偏移
+    sc.scrollTo({ top: Math.max(0, y * readerScale - 12), behavior: 'smooth' });
+  }
+
+  function closeReader() {    const ov = A.$('#reader'), frame = A.$('#readerFrame');
+    readerOpen = false;
+    readerScrolled = false;
+    if (ov) { ov.hidden = true; ov.classList.remove('is-on'); }
+    if (frame) frame.srcdoc = '<!doctype html><html><body style="background:#fff"></body></html>';
   }
 
   function qualityFor(w, h) {
@@ -633,6 +822,19 @@
     const inside = isInsidePage(e.clientX, e.clientY);
     const pt = toPage(e.clientX, e.clientY);
 
+    // 取色器：点一下取色，不落笔
+    if (S.picking) {
+      if (inside) {
+        const hex = probeColorAt(pt);
+        if (hex) {
+          setColor(hex);
+          A.toast('已取色 ' + hex.toUpperCase());
+        }
+      }
+      setPicking(false);
+      return;
+    }
+
     // 浏览模式
     if (S.tool === 'hand') {
       S.mode = 'pan';
@@ -794,6 +996,12 @@
     if (S.drawId !== e.pointerId) { S.mode = null; return; }
 
     if (S.mode === 'draw' && S.stroke) {
+      if (tryTapLink(S.stroke)) {
+        // 轻点命中链接：跟随链接，不留墨点
+        discardStroke();
+        S.mode = null; S.drawId = null;
+        return;
+      }
       finishStroke();
     } else if (S.mode === 'eraseStroke') {
       S.mode = null;
@@ -848,13 +1056,14 @@
 
   function startStroke(pt, pressure, forceTool) {
     const tool = forceTool || (S.tool === 'marker' ? 'marker' : (S.tool === 'pen' && S.kind === 'pencil' ? 'pencil' : 'pen'));
+    const q = S.ruler.on ? snapToRuler(pt) : pt;
     const s = {
       id: A.uid('sk'),
       tool: tool,
       kind: tool === 'pen' ? S.kind : (tool === 'pencil' ? 'pencil' : 'ball'),
       color: tool === 'eraser' ? '#000' : S.color,
       size: S.size,
-      pts: [{ x: pt.x, y: pt.y, p: pressure || 0.5 }],
+      pts: [{ x: q.x, y: q.y, p: pressure || 0.5 }],
       _committed: 0
     };
     S.stroke = s;
@@ -865,8 +1074,133 @@
 
   function appendPoint(s, pt, pressure) {
     const p = (typeof pressure === 'number' && pressure > 0) ? A.clamp(pressure, 0.05, 1) : 0.5;
-    A.Ink.addPoint(s, { x: pt.x, y: pt.y, p: p });
+    const q = S.ruler.on ? snapToRuler(pt) : pt;
+    A.Ink.addPoint(s, { x: q.x, y: q.y, p: p });
     s._sm = null;
+  }
+
+  /* ═════════════ 标尺 ═════════════ */
+
+  function snapToRuler(pt) {
+    const R = S.ruler;
+    const cx = pageSize().w / 2, cy = R.y;
+    const a = R.angle * Math.PI / 180;
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const t = (pt.x - cx) * dx + (pt.y - cy) * dy;
+    return { x: cx + dx * t, y: cy + dy * t };
+  }
+
+  function placeRuler() {
+    const el = A.$('#ruler');
+    if (!el) return;
+    if (!S.ruler.on) { el.hidden = true; return; }
+    el.hidden = false;
+    el.style.top = S.ruler.y + 'px';
+    el.style.transform = 'translate(-50%,-50%) rotate(' + S.ruler.angle + 'deg)';
+  }
+
+  function toggleRuler(force) {
+    S.ruler.on = (typeof force === 'boolean') ? force : !S.ruler.on;
+    const btn = A.$('#btnRuler');
+    if (btn) btn.classList.toggle('is-on', S.ruler.on);
+    placeRuler();
+    if (S.ruler.on) A.toast('标尺已开：笔迹会贴着尺面走，拖圆钮可移动/旋转');
+  }
+
+  function bindRuler() {
+    const el = A.$('#ruler');
+    if (!el) return;
+    let drag = null;
+    el.addEventListener('pointerdown', (e) => {
+      const k = e.target && e.target.dataset ? e.target.dataset.k : null;
+      if (!k) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const start = toPage(e.clientX, e.clientY);
+      drag = { k, start, y0: S.ruler.y, a0: S.ruler.angle };
+      try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      e.stopPropagation();
+      const pt = toPage(e.clientX, e.clientY);
+      const { h } = pageSize();
+      if (drag.k === 'move') {
+        S.ruler.y = A.clamp(drag.y0 + (pt.y - drag.start.y), 40, h - 40);
+      } else {
+        const cx = pageSize().w / 2;
+        const ang = Math.atan2(pt.y - S.ruler.y, pt.x - cx) * 180 / Math.PI;
+        S.ruler.angle = e.shiftKey ? ang : Math.round(ang / 5) * 5;
+      }
+      placeRuler();
+    });
+    const end = (e) => { if (drag) { drag = null; try { e.target.releasePointerCapture(e.pointerId); } catch (err) { } } };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  }
+
+  /* ═════════════ 取色器 ═════════════ */
+
+  function rgbToHex(r, g, b) {
+    const h = (n) => ('0' + Math.max(0, Math.min(255, Math.round(n))).toString(16)).slice(-2);
+    return '#' + h(r) + h(g) + h(b);
+  }
+
+  function cssColorToHex(v) {
+    const m = String(v || '').match(/rgba?\(([^)]+)\)/);
+    if (!m) return /^#[0-9a-f]{3,8}$/i.test(String(v)) ? String(v).slice(0, 7) : null;
+    const parts = m[1].split(',').map(s => parseFloat(s));
+    if (parts.length >= 4 && parts[3] < 0.08) return null;
+    return rgbToHex(parts[0], parts[1], parts[2]);
+  }
+
+  /** 吸取颜色：优先网页元素的背景/文字色，其次笔迹像素，最后纸色 */
+  function probeColorAt(pt) {
+    const p = S.page;
+    if (!p) return null;
+
+    if (p.type === 'html' && S.htmlVisible && D.frame && D.frame.contentDocument) {
+      try {
+        const doc = D.frame.contentDocument;
+        const win = doc.defaultView;
+        let el = doc.elementFromPoint(pt.x, pt.y);
+        let textColor = null;
+        let guard = 0;
+        while (el && el !== doc.documentElement && guard++ < 24) {
+          if (el.nodeType === 1) {
+            const cs = win.getComputedStyle(el);
+            const bg = cssColorToHex(cs.backgroundColor);
+            if (bg) return bg;
+            if (!textColor) {
+              const col = cssColorToHex(cs.color);
+              if (col && !/^#(0{3}|fff{1,3})$/i.test(col.replace('#ffffff', '#fff'))) textColor = col;
+            }
+          }
+          el = el.parentElement;
+        }
+        if (textColor) return textColor;
+      } catch (e) { }
+    }
+
+    // 笔迹像素
+    try {
+      const sc = D.baseCv.width / (p.w || 1);
+      const x = Math.round(pt.x * sc);
+      const y = Math.round(pt.y * (D.baseCv.height / (p.h || 1)));
+      if (x >= 0 && y >= 0 && x < D.baseCv.width && y < D.baseCv.height) {
+        const d = D.baseCv.getContext('2d').getImageData(x, y, 1, 1).data;
+        if (d[3] > 30) return rgbToHex(d[0], d[1], d[2]);
+      }
+    } catch (e) { }
+
+    return p.paperColor || '#ffffff';
+  }
+
+  function setPicking(on) {
+    S.picking = !!on;
+    const btn = A.$('#btnPick');
+    if (btn) btn.classList.toggle('is-picking', S.picking);
+    if (S.picking) A.toast('取色器：点一下要取的颜色');
   }
 
   function paintLive(s) {
@@ -1411,6 +1745,7 @@
 
   function markDirty() {
     clearTimeout(saveTimer);
+    if (A.backup) A.backup.setState('saving');
     saveTimer = setTimeout(() => persistPage(false), 800);
   }
 
@@ -1433,10 +1768,20 @@
       S.book.pageCount = S.pages.length;
       await A.db.saveBook(S.book);
     }
+    // ① 立即回执：IndexedDB 已落盘
+    if (A.backup) {
+      A.backup.setState(A.db.memoryOnly ? 'local' : 'saved');
+      A.backup.schedule();
+    }
+  }
+
+  /* 立即落盘：当前页写入 IndexedDB，再推一次原生快照 */
+  async function saveNow() {
+    await persistPage(true);
+    if (A.backup) await A.backup.flush();
   }
 
   /* ═════════════ 页面操作 ═════════════ */
-
   async function addPage(kind) {
     await persistPage(true);
     const order = S.pages.length;
@@ -1761,12 +2106,29 @@
   function bind() {
     const on = (sel, ev, fn) => { const n = A.$(sel); if (n) n.addEventListener(ev, fn); };
 
+    bindRuler();
     on('#btnBack', 'click', closeBook);
     on('#btnUndo', 'click', undo);
     on('#btnRedo', 'click', redo);
     on('#btnPages', 'click', openPagesPanel);
     on('#btnExport', 'click', openExportPanel);
     on('#btnMore', 'click', openMorePanel);
+    on('#btnRead', 'click', openReader);
+    on('#btnRuler', 'click', () => toggleRuler());
+    on('#btnPick', 'click', () => setPicking(!S.picking));
+    on('#btnReaderClose', 'click', closeReader);
+    on('#btnReaderTop', 'click', () => { const sc = A.$('#readerScroll'); if (sc) sc.scrollTo({ top: 0, behavior: 'smooth' }); });
+
+    // 阅读视图里的高度回报与外部链接
+    window.addEventListener('message', (e) => {
+      const f = A.$('#readerFrame');
+      if (!f || !e.source || e.source !== f.contentWindow) return;
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      if (typeof d.__moyu_h === 'number') readerFit();
+      else if (d.__moyu_hash) readerScrollTo(d.__moyu_hash);
+      else if (d.__moyu_link) followLink(d.__moyu_link);
+    });
     on('#pageIndicator', 'click', openPagesPanel);
     on('#btnZoomIn', 'click', () => { const r = stageRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.25); });
     on('#btnZoomOut', 'click', () => { const r = stageRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 0.8); });
@@ -1923,24 +2285,24 @@
       const f = document.createElement('iframe');
       f.style.cssText = 'position:fixed;left:-99999px;top:0;width:' + width + 'px;height:1000px;border:0;visibility:hidden;';
       document.body.appendChild(f);
-      let settled = false;
-      A.HtmlPage.mount(f, src, {
-        onHeight: (h) => {
-          if (!settled && h > 40) {
-            settled = true;
-            setTimeout(() => { try { f.remove(); } catch (e) { } resolve(h); }, 260);
-          }
-        }
-      }).then(h => {
-        if (!settled) {
-          settled = true;
-          try { f.remove(); } catch (e) { }
-          resolve(Math.max(h || 0, 600));
-        }
-      });
-      setTimeout(() => {
-        if (!settled) { settled = true; try { f.remove(); } catch (e) { } resolve(1200); }
-      }, 5000);
+      let best = 0, settle = 0, done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(settle);
+        try { f.remove(); } catch (e) { }
+        resolve(Math.max(best, 600));
+      };
+      // 高度是逐步长出来的（字体、图片、布局回填），取稳定后的最大值
+      const bump = (h) => {
+        if (typeof h === 'number' && h > best) best = h;
+        clearTimeout(settle);
+        settle = setTimeout(finish, 500);
+      };
+      A.HtmlPage.mount(f, src, { onHeight: (h) => bump(h) })
+        .then((h) => bump(h || 0))
+        .catch(() => bump(0));
+      setTimeout(finish, 7000);
     });
   }
 
@@ -1958,6 +2320,6 @@
   A.Studio = {
     init, openBook, closeBook, blankPage, htmlPage, addPage, goPage,
     exportPdf, exportPng, fitWidth, fitPage, S, createHtmlBook, measureHtml,
-    openPagesPanel, openPaperPanel, openExportPanel, insertImage
+    openPagesPanel, openPaperPanel, openExportPanel, insertImage, saveNow
   };
 })(window.MY);
