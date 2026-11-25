@@ -11,7 +11,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # macos-14/15 是 arm64 托管机，免费额度下经常拿不到 runner（job not acquired）；
+    # macos-13 是 Intel 机器，交叉编译 arm64 一样可行，排队快很多
+    runs-on: macos-13
     timeout-minutes: 40
 
     steps:
