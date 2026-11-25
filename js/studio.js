@@ -22,6 +22,9 @@
     { id: 'a4p', name: 'A4 竖', w: 794, h: 1123 },
     { id: 'a4l', name: 'A4 横', w: 1123, h: 794 },
     { id: 'ipad', name: 'iPad 横', w: 1180, h: 820 },
+    { id: 'a3l', name: 'A3 横', w: 1587, h: 1123 },
+    { id: 'a2l', name: 'A2 横', w: 2245, h: 1587 },
+    { id: 'board', name: '大画板', w: 3000, h: 2000 },
     { id: 'html', name: '网页', w: 1024, h: 1448 }
   ];
 
@@ -1282,11 +1285,7 @@
 
     if (S.mode === 'draw' && S.stroke) {
       const pt = toPage(e.clientX, e.clientY);
-      const pred = eventPredicted(e);
-      if (pred) {
-        const pp = toPage(pred.x, pred.y);
-        appendPoint(S.stroke, pp, e.pressure);
-      }
+      // 预测点只用来"提前画"，但它会落进笔迹数据，收笔时多出一小段甩尾尖刺
       appendPoint(S.stroke, pt, e.pressure);
       paintLive(S.stroke);
       return;
@@ -1810,9 +1809,12 @@
       pts: s.pts.map(p => ({ x: p.x, y: p.y, p: p.p }))
     }));
     S.sel.strokes.forEach(bakeShapeInPlace);
-    const b = A.Ink.bboxOf(S.sel.strokes, 8);
-    S.sel.bbox = b;
     const a0 = S.sel.angle || 0;
+    // 选区有角度时，bbox 已经是"内容坐标"里的框；此时再用世界坐标 AABB
+    // 会让第一次拖手柄框突然放大 1.3 倍（旋转 45° 时最明显）
+    const b = a0 ? { x: S.sel.bbox.x, y: S.sel.bbox.y, w: S.sel.bbox.w, h: S.sel.bbox.h }
+      : A.Ink.bboxOf(S.sel.strokes, 8);
+    S.sel.bbox = b;
     const c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
     S.selXform = {
       h: handle,
@@ -1948,11 +1950,23 @@
 
   function showCtxFloat() {
     const b = S.sel.bbox;
+    const ang = S.sel.angle || 0;
+    let bx = b.x, by = b.y, bw = b.w, bh = b.h;
+    if (ang) {
+      // 旋转后的框，四个角决定的才是屏幕上真正的范围
+      const c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+      const cs = [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]
+        .map(([x, y]) => rotAbout({ x: x, y: y }, c, ang));
+      bx = Math.min.apply(null, cs.map(p => p.x));
+      by = Math.min.apply(null, cs.map(p => p.y));
+      bw = Math.max.apply(null, cs.map(p => p.x)) - bx;
+      bh = Math.max.apply(null, cs.map(p => p.y)) - by;
+    }
     const r = stageRect();
     const host = D.viewStu.getBoundingClientRect();
-    const px = r.left + S.view.x + (b.x + b.w / 2) * S.view.scale;
+    const px = r.left + S.view.x + (bx + bw / 2) * S.view.scale;
     // 工具条放选区下方：上方要留给旋转手柄，否则手柄被盖住点不到
-    const below = r.top + S.view.y + (b.y + b.h) * S.view.scale + 14;
+    const below = r.top + S.view.y + (by + bh) * S.view.scale + 14;
     const py = below;
     const el = D.ctxFloat;
     el.style.left = (px - host.left) + 'px';
@@ -1961,7 +1975,7 @@
     requestAnimationFrame(() => {
       const er = el.getBoundingClientRect();
       if (er.bottom > window.innerHeight - 8) {
-        el.style.top = (r.top + S.view.y + b.y * S.view.scale - 56 - host.top) + 'px';
+        el.style.top = (r.top + S.view.y + by * S.view.scale - 56 - host.top) + 'px';
       }
     });
     el.classList.add('is-on');
@@ -2395,7 +2409,14 @@
       }
     } else if (op.t === 'move') {
       const k = reverse ? -1 : 1;
-      op.strokes.forEach(s => s.pts.forEach(p => { p.x += op.dx * k; p.y += op.dy * k; }));
+      op.strokes.forEach(s => {
+        s.pts.forEach(p => { p.x += op.dx * k; p.y += op.dy * k; });
+        s._sm = null;   // 不清缓存：撤销后墨迹留在原处，只有数据回去了
+      });
+      if (S.sel) {
+        S.sel.bbox = moveBBox(S.sel.bbox, op.dx * k, op.dy * k);
+        drawSelectionBox();
+      }
     } else if (op.t === 'imgadd') {
       const arr = S.page.images;
       if (reverse) {
@@ -2581,6 +2602,22 @@
     A.toast(kind === 'copy' ? '已复制为新页' : '已添加一页');
   }
 
+  /* 调整页序：整本重排 order 再落库，缩略图/指示器/IndexedDB 才一致 */
+  async function movePage(from, to) {
+    if (from === to || to < 0 || to >= S.pages.length) return;
+    await persistPage(true);
+    const cur = S.page;
+    const [p] = S.pages.splice(from, 1);
+    S.pages.splice(to, 0, p);
+    for (let i = 0; i < S.pages.length; i++) {
+      S.pages[i].order = i;
+      await A.db.savePage(S.pages[i]);
+    }
+    const ni = S.pages.indexOf(cur);
+    if (ni >= 0 && ni !== S.idx) { S.idx = ni; updatePageIndicator(); }
+    A.toast('已移到第 ' + (to + 1) + ' 页');
+  }
+
   async function deletePage(idx) {
     if (S.pages.length <= 1) { A.toast('至少保留一页'); return; }
     const p = S.pages[idx];
@@ -2623,6 +2660,20 @@
       thumb.appendChild(makeThumb(p, 96, 130));
       chip.appendChild(thumb);
       chip.appendChild(A.el('div', 'pc-num', (i + 1) + (p.type === 'html' ? ' · 网页' : '')));
+      // 触屏上拖拽排序太容易误触翻页，给两个明确的挪页按钮
+      const mv = A.el('div');
+      mv.style.cssText = 'display:flex;gap:5px;justify-content:center;margin-top:5px';
+      const bs = 'width:26px;height:22px;border:0;border-radius:6px;background:rgba(255,255,255,.09);color:#ddd;font-size:14px;line-height:1;cursor:pointer';
+      mv.innerHTML = '<button data-m="-1" style="' + bs + (i === 0 ? ';opacity:.3' : '') + '">‹</button>' +
+        '<button data-m="1" style="' + bs + (i === S.pages.length - 1 ? ';opacity:.3' : '') + '">›</button>';
+      A.$$('button', mv).forEach(b => b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const to = i + Number(b.dataset.m);
+        if (to < 0 || to >= S.pages.length) return;
+        A.sheet.close();
+        setTimeout(() => { movePage(i, to).then(() => openPagesPanel()); }, 200);
+      }));
+      chip.appendChild(mv);
       chip.addEventListener('click', () => { A.sheet.close(); setTimeout(() => goPage(i), 200); });
       strip.appendChild(chip);
     });

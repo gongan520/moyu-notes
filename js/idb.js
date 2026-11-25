@@ -174,6 +174,11 @@
       try { return await req(tx('folders', 'readonly').getAll()); } catch (e) { return []; }
     },
 
+    async getFolder(id) {
+      if (!id) return null;
+      if (memoryOnly) return mem.folders.get(id) || null;
+      try { return await req(tx('folders', 'readonly').get(id)); } catch (e) { return null; }
+    },
     async saveFolder(f) {
       if (memoryOnly) { mem.folders.set(f.id, f); return f; }
       try { await req(tx('folders', 'readwrite').put(f)); } catch (e) { }

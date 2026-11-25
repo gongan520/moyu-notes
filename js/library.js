@@ -609,6 +609,123 @@
     A.Studio.openBook(book.id);
   }
 
+  /* ───── 模板库：开篇就是排版好的成品页（Pages / GoodNotes 的做法） ───── */
+  const TPL_CSS = '<style>'
+    + 'body{margin:0;padding:54px 58px;font:16px/1.9 -apple-system,"PingFang SC","Songti SC",serif;color:#1f1f29;background:#fff}'
+    + 'h1{font-size:29px;margin:0 0 6px;letter-spacing:.4px}'
+    + 'h2{font-size:18px;margin:26px 0 10px;padding-left:10px;border-left:3px solid #c9a227}'
+    + '.sub{color:#8a8a96;font-size:13px;margin:0 0 20px}'
+    + 'hr{border:0;border-top:1px solid #e6e6ee;margin:20px 0}'
+    + '.grid2{display:grid;grid-template-columns:34% 1fr;gap:16px}'
+    + '.box{border:1px solid #e6e6ee;border-radius:10px;padding:14px 16px;min-height:110px}'
+    + '.box h3{margin:0 0 8px;font-size:14px;color:#6a6a78;font-weight:600}'
+    + '.line{height:1.85em;border-bottom:1px dashed #dcdce6}'
+    + 'table{width:100%;border-collapse:collapse;font-size:14px}'
+    + 'th,td{border:1px solid #e2e2ea;padding:9px 11px;text-align:left;vertical-align:top}'
+    + 'th{background:#f7f5ee;font-weight:600}'
+    + '.tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;background:#f4efe0;color:#96762a;margin-right:6px}'
+    + '.ck{display:inline-block;width:13px;height:13px;border:1.4px solid #b9b9c6;border-radius:3px;margin-right:8px;vertical-align:-2px}'
+    + '</style>';
+
+  const TEMPLATES = [
+    {
+      id: 'cornell', name: '康奈尔笔记', sub: '提示栏 / 笔记 / 总结',
+      body: '<h1>康奈尔笔记</h1><p class="sub">左边记要点和问题，右边写正文，最后底部三句话总结</p>'
+        + '<table><tr><th style="width:32%">线索 / 问题</th><th>笔记</th></tr>'
+        + '<tr><td style="height:150px"><span class="line"></span><span class="line"></span><span class="line"></span></td>'
+        + '<td><span class="line"></span><span class="line"></span><span class="line"></span><span class="line"></span></td></tr>'
+        + '<tr><td style="height:150px"><span class="line"></span><span class="line"></span></td>'
+        + '<td><span class="line"></span><span class="line"></span><span class="line"></span></td></tr>'
+        + '<tr><td style="height:150px"><span class="line"></span><span class="line"></span></td>'
+        + '<td><span class="line"></span><span class="line"></span><span class="line"></span></td></tr></table>'
+        + '<h2>总结</h2><div class="box"><span class="line"></span><span class="line"></span><span class="line"></span></div>'
+    },
+    {
+      id: 'meeting', name: '会议纪要', sub: '议题 / 决议 / 待办',
+      body: '<h1>会议纪要</h1><p class="sub"><span class="tag">日期</span><span class="tag">地点</span><span class="tag">主持</span><span class="tag">记录</span></p>'
+        + '<table><tr><th style="width:22%">参会人</th><td></td></tr>'
+        + '<tr><th>会议目标</th><td></td></tr></table>'
+        + '<h2>议题与讨论</h2><div class="box"><span class="line"></span><span class="line"></span><span class="line"></span><span class="line"></span></div>'
+        + '<h2>结论 / 决议</h2><div class="box"><span class="line"></span><span class="line"></span></div>'
+        + '<h2>待办</h2><table><tr><th style="width:46%">事项</th><th style="width:18%">负责人</th><th>截止</th></tr>'
+        + '<tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr>'
+        + '<tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr></table>'
+    },
+    {
+      id: 'reading', name: '读书笔记', sub: '摘录 / 想法 / 行动',
+      body: '<h1>读书笔记</h1><p class="sub"><span class="tag">书名</span><span class="tag">作者</span><span class="tag">读完日期</span></p>'
+        + '<h2>一句话概括</h2><div class="box" style="min-height:64px"><span class="line"></span></div>'
+        + '<h2>摘录</h2><div class="box"><span class="line"></span><span class="line"></span><span class="line"></span><span class="line"></span><span class="line"></span></div>'
+        + '<h2>我的想法</h2><div class="box"><span class="line"></span><span class="line"></span><span class="line"></span></div>'
+        + '<h2>可以立刻做的事</h2><div class="box"><span class="ck"></span><span class="line"></span><span class="ck"></span><span class="line"></span></div>'
+    },
+    {
+      id: 'week', name: '周计划', sub: '七天 / 优先级',
+      body: '<h1>本周计划</h1><p class="sub">先写三件最重要的事，其余排进格子</p>'
+        + '<table><tr><th style="width:16%">周一</th><td style="height:74px"></td></tr>'
+        + '<tr><th>周二</th><td style="height:74px"></td></tr>'
+        + '<tr><th>周三</th><td style="height:74px"></td></tr>'
+        + '<tr><th>周四</th><td style="height:74px"></td></tr>'
+        + '<tr><th>周五</th><td style="height:74px"></td></tr>'
+        + '<tr><th>周六</th><td style="height:74px"></td></tr>'
+        + '<tr><th>周日</th><td style="height:74px"></td></tr></table>'
+        + '<h2>本周最重要三件事</h2><div class="box"><span class="ck"></span>1.<span class="line"></span><span class="ck"></span>2.<span class="line"></span><span class="ck"></span>3.<span class="line"></span></div>'
+    },
+    {
+      id: 'okr', name: 'OKR 目标', sub: '目标 / 关键结果 / 进度',
+      body: '<h1>OKR</h1><p class="sub"><span class="tag">周期</span><span class="tag">负责人</span></p>'
+        + '<h2>O · 目标</h2><div class="box" style="min-height:60px"><span class="line"></span></div>'
+        + '<h2>KR · 关键结果</h2><table><tr><th style="width:62%">关键结果</th><th style="width:16%">目标值</th><th>当前</th></tr>'
+        + '<tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr></table>'
+        + '<h2>动作拆解</h2><div class="box"><span class="ck"></span><span class="line"></span><span class="ck"></span><span class="line"></span><span class="ck"></span><span class="line"></span></div>'
+    },
+    {
+      id: 'travel', name: '旅行清单', sub: '行前 / 行程 / 花费',
+      body: '<h1>旅行清单</h1><p class="sub"><span class="tag">目的地</span><span class="tag">日期</span><span class="tag">同行</span></p>'
+        + '<div class="grid2"><div class="box"><h3>行前要办</h3>'
+        + '<div><span class="ck"></span>证件 / 签证</div><div><span class="ck"></span>机票 / 车票</div>'
+        + '<div><span class="ck"></span>住宿</div><div><span class="ck"></span>保险</div><div><span class="ck"></span>换汇</div></div>'
+        + '<div class="box"><h3>行李</h3><div><span class="ck"></span>充电器 / 转换头</div><div><span class="ck"></span>常用药</div>'
+        + '<div><span class="ck"></span>雨具</div><div><span class="ck"></span>相机</div><div><span class="ck"></span></div></div></div>'
+        + '<h2>行程</h2><table><tr><th style="width:18%">日期</th><th>安排</th><th style="width:22%">备注</th></tr>'
+        + '<tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr></table>'
+    }
+  ];
+
+  function openTemplates() {
+    const node = A.el('div');
+    const list = A.el('div', 'list');
+    TEMPLATES.forEach(t => {
+      const b = A.el('button', 'list-item');
+      b.dataset.t = t.id;
+      b.innerHTML = '<svg class="ico" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>'
+        + '<span class="li-grow" style="text-align:left"><b style="font-weight:600">' + t.name + '</b>'
+        + '<span style="display:block;font-size:12px;color:#8a8a96;margin-top:2px">' + t.sub + '</span></span>';
+      list.appendChild(b);
+    });
+    node.appendChild(list);
+    A.sheet.open({
+      title: '模板库',
+      sub: '选一个版式，直接开始写',
+      node,
+      onMount: (body, sh) => {
+        A.$$('[data-t]', body).forEach(b => b.addEventListener('click', async () => {
+          const t = TEMPLATES.find(x => x.id === b.dataset.t);
+          if (!t) return;
+          sh.close();
+          A.busy('正在排版…');
+          try {
+            const html = '<!doctype html><html><head><meta charset="utf-8">' + TPL_CSS + '</head><body>' + t.body + '</body></html>';
+            const id = await A.Studio.createHtmlBook(html, t.name);
+            A.busy(false);
+            await refresh();
+            if (id) A.Studio.openBook(id);
+          } catch (e) { A.busy(false); A.toast('模板创建失败：' + (e.message || '')); }
+        }));
+      }
+    });
+  }
+
   async function importFiles(files) {
     if (!files || !files.length) return;
     A.busy('正在导入 HTML…');
@@ -741,6 +858,17 @@
         await A.db.savePages(pages);
         n++;
       }
+      // 文件夹 id 悬空的书会从书架直接消失：落到根目录，至少能看见
+      const allF = await A.db.allFolders();
+      const fset = new Set((allF || []).map(f => f.id));
+      for (const item of data.books) {
+        const b = item.book;
+        if (!b || !b.id) continue;
+        if (b.folderId && !fset.has(b.folderId)) {
+          b.folderId = null;
+          await A.db.saveBook(b);
+        }
+      }
       await refresh();
       if (A.Search) A.Search.invalidate();
       A.toast('已恢复 ' + n + ' 本笔记' + (folders.length ? '、' + folders.length + ' 个文件夹' : ''));
@@ -769,6 +897,7 @@
     bind('#btnEmptyNew', () => newBook());
     bind('#btnImportHtml', () => A.$('#fileHtml').click());
     bind('#btnEmptyImport', () => A.$('#fileHtml').click());
+    bind('#btnTemplates', openTemplates);
     bind('#btnImportPdf', () => {
       if (A.PdfImport) A.PdfImport.pick();
       else A.toast('PDF 模块未加载');
