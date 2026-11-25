@@ -1176,27 +1176,107 @@
       el.style.height = im.h + 'px';
       el.innerHTML = '<img src="' + im.src + '" alt="">';
 
-      let dragging = false, last = null;
+      let dragging = false, last = null, origin = null, pressTimer = 0, longFired = false;
       el.addEventListener('pointerdown', (e) => {
         if (S.tool !== 'image' && S.tool !== 'lasso') return;
         e.stopPropagation();
         dragging = true;
+        longFired = false;
         last = toPage(e.clientX, e.clientY);
+        origin = { x: im.x, y: im.y };
         el.setPointerCapture(e.pointerId);
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(() => {
+          longFired = true;
+          dragging = false;
+          im.x = origin.x; im.y = origin.y;
+          el.style.left = im.x + 'px'; el.style.top = im.y + 'px';
+          A.haptic(12);
+          openImageOptions(im);
+        }, 560);
       });
       el.addEventListener('pointermove', (e) => {
         if (!dragging) return;
         const pt = toPage(e.clientX, e.clientY);
         im.x += pt.x - last.x; im.y += pt.y - last.y;
         last = pt;
+        if (Math.abs(im.x - origin.x) + Math.abs(im.y - origin.y) > 6) clearTimeout(pressTimer);
         el.style.left = im.x + 'px'; el.style.top = im.y + 'px';
       });
-      el.addEventListener('pointerup', () => { if (dragging) { dragging = false; markDirty(); } });
-      el.addEventListener('dblclick', () => {
-        S.page.images = S.page.images.filter(x => x !== im);
-        renderImages(); markDirty();
+      el.addEventListener('pointerup', () => {
+        clearTimeout(pressTimer);
+        if (longFired) { longFired = false; return; }
+        if (!dragging) return;
+        dragging = false;
+        const dx = im.x - origin.x, dy = im.y - origin.y;
+        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+          pushUndo({ t: 'imgmove', im: im, dx: dx, dy: dy });
+        }
+        markDirty();
+      });
+      el.addEventListener('pointercancel', () => {
+        clearTimeout(pressTimer);
+        if (dragging && origin) { im.x = origin.x; im.y = origin.y; }
+        dragging = false;
+        renderImages();
       });
       D.imgLayer.appendChild(el);
+    });
+  }
+
+  function openImageOptions(im) {
+    const { w: pw } = pageSize();
+    const ar = im.h / im.w || 1;
+    const w0 = im.w, h0 = im.h;
+    const pct = Math.max(15, Math.min(100, Math.round(im.w / pw * 100)));
+    const node = A.el('div');
+    node.innerHTML =
+      '<div class="field"><div class="field-line"><label>图片宽度</label><span class="val" id="imgPct">' + pct + '%</span></div>' +
+      '<input class="rng" type="range" id="imgW" min="15" max="100" step="1" value="' + pct + '"></div>' +
+      '<div class="list">' +
+      '<button class="list-item" data-a="fit"><svg class="ico" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span class="li-grow">贴合页宽<span class="li-sub">拉满到纸张宽度</span></span></button>' +
+      '<button class="list-item" data-a="del"><svg class="ico" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13"/><path d="M11 11v6M13 11v6"/></svg><span class="li-grow">删除这张图片<span class="li-sub">删除后仍可撤销</span></span></button>' +
+      '</div>';
+    A.sheet.open({
+      title: '图片',
+      dimLight: true,
+      node,
+      onMount: (body, sh) => {
+        let prevW = w0, prevH = h0;
+        const apply = (v) => {
+          const p = Math.max(15, Math.min(100, v));
+          im.w = pw * p / 100;
+          im.h = im.w * ar;
+          const lab = A.$('#imgPct', body);
+          if (lab) lab.textContent = Math.round(p) + '%';
+          renderImages();
+        };
+        const commit = () => {
+          if (Math.abs(im.w - prevW) < 0.5 && Math.abs(im.h - prevH) < 0.5) return;
+          pushUndo({ t: 'imgsize', im: im, w0: prevW, h0: prevH, w1: im.w, h1: im.h });
+          prevW = im.w; prevH = im.h;
+          markDirty();
+        };
+        const rng = A.$('#imgW', body);
+        if (rng) {
+          rng.addEventListener('input', () => apply(+rng.value));
+          rng.addEventListener('change', commit);
+        }
+        A.$$('.list-item', body).forEach(b => b.addEventListener('click', () => {
+          const a = b.dataset.a;
+          if (a === 'fit') { apply(100); commit(); sh.close(); return; }
+          if (a === 'del') {
+            sh.close();
+            const at = S.page.images.indexOf(im);
+            if (at < 0) return;
+            S.page.images.splice(at, 1);
+            pushUndo({ t: 'imgdel', items: [{ im: im, i: at }] });
+            renderImages();
+            markDirty();
+            A.toast('图片已删除 · 可撤销');
+          }
+        }));
+      }
     });
   }
 
@@ -1213,9 +1293,10 @@
         w: iw, h: ih
       };
       S.page.images.push(im);
+      pushUndo({ t: 'imgadd', im: im });
       renderImages();
       markDirty();
-      A.toast('已插入图片，切到「套索」可拖动位置');
+      A.toast('已插入图片 · 套索工具下可拖动或双击删除');
     }).catch(() => A.toast('图片读取失败'));
   }
 
@@ -1243,6 +1324,7 @@
     S.redo.push(op);
     updateUndoButtons();
     repaintInk();
+    renderImages();
     markDirty();
   }
 
@@ -1253,6 +1335,7 @@
     S.undo.push(op);
     updateUndoButtons();
     repaintInk();
+    renderImages();
     markDirty();
   }
 
@@ -1283,6 +1366,36 @@
     } else if (op.t === 'move') {
       const k = reverse ? -1 : 1;
       op.strokes.forEach(s => s.pts.forEach(p => { p.x += op.dx * k; p.y += op.dy * k; }));
+    } else if (op.t === 'imgadd') {
+      const arr = S.page.images;
+      if (reverse) {
+        const i = arr.indexOf(op.im);
+        if (i >= 0) arr.splice(i, 1);
+      } else if (arr.indexOf(op.im) < 0) {
+        arr.push(op.im);
+      }
+    } else if (op.t === 'imgdel') {
+      const arr = S.page.images;
+      if (reverse) {
+        op.items.slice().sort((a, b) => a.i - b.i).forEach(it => {
+          if (arr.indexOf(it.im) < 0) {
+            const at = it.i < 0 || it.i > arr.length ? arr.length : it.i;
+            arr.splice(at, 0, it.im);
+          }
+        });
+      } else {
+        op.items.forEach(it => {
+          const i = arr.indexOf(it.im);
+          if (i >= 0) arr.splice(i, 1);
+        });
+      }
+    } else if (op.t === 'imgmove') {
+      const k = reverse ? -1 : 1;
+      op.im.x += op.dx * k;
+      op.im.y += op.dy * k;
+    } else if (op.t === 'imgsize') {
+      if (reverse) { op.im.w = op.w0; op.im.h = op.h0; }
+      else { op.im.w = op.w1; op.im.h = op.h1; }
     }
   }
 
@@ -1845,6 +1958,6 @@
   A.Studio = {
     init, openBook, closeBook, blankPage, htmlPage, addPage, goPage,
     exportPdf, exportPng, fitWidth, fitPage, S, createHtmlBook, measureHtml,
-    openPagesPanel, openPaperPanel, openExportPanel
+    openPagesPanel, openPaperPanel, openExportPanel, insertImage
   };
 })(window.MY);

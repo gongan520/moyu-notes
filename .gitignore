@@ -16,3 +16,5 @@ DerivedData/
 # 临时
 *.log
 .tmp/
+dist/
+.qa/
