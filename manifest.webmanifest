@@ -1,0 +1,22 @@
+{
+  "name": "墨屿 · 手写笔记",
+  "short_name": "墨屿",
+  "description": "在 HTML 文档上直接手写的 iPad 笔记应用",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "/moyu-notes",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
+  "orientation": "any",
+  "background_color": "#0d0d0f",
+  "theme_color": "#0d0d0f",
+  "lang": "zh-CN",
+  "categories": ["productivity", "education"],
+  "icons": [
+    { "src": "./assets/icon-120.png", "sizes": "120x120", "type": "image/png" },
+    { "src": "./assets/icon-152.png", "sizes": "152x152", "type": "image/png" },
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./assets/icon-1024.png", "sizes": "1024x1024", "type": "image/png" }
+  ]
+}
