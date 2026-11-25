@@ -56,7 +56,7 @@ final class LocalHTTPServer {
     // MARK: - Socket
 
     private func open(port p: UInt16) throws -> UInt16 {
-        let fd = Darwin.socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ServerError.socketFailed }
 
         var yes: Int32 = 1
