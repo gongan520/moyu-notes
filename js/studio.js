@@ -947,6 +947,7 @@
     S.view.scale = s;
     S.view.x = (r.width - w * s) / 2;
     S.view.y = pad;
+    S.view.fit = 'w';
     applyView();
     scheduleQuality();
   }
@@ -959,6 +960,7 @@
     S.view.scale = s;
     S.view.x = (r.width - w * s) / 2;
     S.view.y = Math.max(pad, (r.height - h * s) / 2);
+    S.view.fit = 'p';
     applyView();
     scheduleQuality();
   }
@@ -971,6 +973,7 @@
     S.view.scale = ns;
     S.view.x = (cx - r.left) - px * ns;
     S.view.y = (cy - r.top) - py * ns;
+    S.view.fit = null;
     applyView();
     clampView();
     scheduleQuality();
@@ -3259,8 +3262,11 @@
 
     window.addEventListener('resize', A.debounce(() => {
       if (!document.body.classList.contains('in-studio')) return;
-      // 横竖屏切换/键盘弹出不该把当前缩放重置回"适应宽度"
-      if (S.page && S.view.scale > 0) { clampView(); scheduleQuality(); }
+      // 旋屏 / 不同 iPad 尺寸：处于自动适配的，重新贴合新视口；
+      // 用户手动缩放过则保持原缩放，只做边界夹取
+      if (S.view.fit === 'w') fitWidth(true);
+      else if (S.view.fit === 'p') fitPage();
+      else if (S.page && S.view.scale > 0) { clampView(); scheduleQuality(); }
       else fitWidth();
     }, 220));
 

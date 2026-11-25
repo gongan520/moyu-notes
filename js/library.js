@@ -238,8 +238,14 @@
     }
     empty.classList.remove('is-on');
     if (!list.length && !subs.length) {
-      grid.innerHTML = '<div style="grid-column:1/-1;padding:60px 0;text-align:center;color:#70707c;font-size:14px">' +
-        (S.q ? '没有匹配的笔记' : '这个文件夹是空的') + '</div>';
+      // Notability 式空文件夹：圆形灰底图标 + 引导文案
+      grid.innerHTML =
+        '<div class="folder-empty" style="grid-column:1/-1;padding:70px 20px;text-align:center;color:var(--tx-3)">' +
+        '<div class="folder-empty-ico"><svg viewBox="0 0 24 24" class="ico" style="width:54px;height:54px">' +
+        '<path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.6 2h8.2a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-10z"/></svg></div>' +
+        '<div style="margin-top:16px;font-size:15px;color:var(--tx-2)">' + (S.q ? '没有匹配的笔记' : '这个文件夹还是空的') + '</div>' +
+        '<div style="margin-top:8px;font-size:13px;line-height:1.8">轻触「新建」按钮，创建新笔记。<br>长按「新建」按钮，导入文件或从模板开始。</div>' +
+        '</div>';
       return;
     }
 
@@ -1056,6 +1062,12 @@
     bind('#btnThemeMode', cycleTheme);
     bind('#btnHelp', help);
     bind('#btnNewFolderSide', newFolder);
+    bind('#btnSettings', () => {
+      // 设置：目前汇聚帮助、主题、朗读语速等入口，先给一个简明说明
+      A.toast('设置：主题、朗读语速可在编辑页顶部调节');
+      if (A.Words) A.Words.openProvider(A.Words.aiId, '');
+    });
+    bind('#btnNotify', () => A.toast('暂无新通知'));
     bind('#btnSideToggle', () => {
       document.body.classList.toggle('side-hidden');
       const o = A.$('#btnSideOpen');

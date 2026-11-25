@@ -11,14 +11,14 @@
 
   const PROVIDERS = [
     {
-      id: 'youdao', name: '有道词典', kind: 'dict',
-      url: w => 'https://dict.youdao.com/result?word=' + encodeURIComponent(w) + '&lang=en',
-      embeddable: true
-    },
-    {
       id: 'bing', name: '必应词典', kind: 'dict',
       url: w => 'https://cn.bing.com/dict/search?q=' + encodeURIComponent(w),
       embeddable: true
+    },
+    {
+      id: 'youdao', name: '有道词典', kind: 'dict',
+      url: w => 'https://dict.youdao.com/result?word=' + encodeURIComponent(w) + '&lang=en',
+      embeddable: false
     },
     {
       id: 'translate', name: '整句翻译', kind: 'dict',
@@ -32,7 +32,7 @@
     },
     {
       id: 'deepseek', name: 'DeepSeek', kind: 'ai',
-      url: w => 'https://chat.deepseek.com/',
+      url: w => 'https://chat.deepseek.com/',   // 无带词参数，走外部打开
       embeddable: false
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       id: 'gemini', name: 'Gemini', kind: 'ai',
-      url: w => 'https://gemini.google.com/app',
+      url: w => 'https://gemini.google.com/app',   // 无带词参数，走外部打开
       embeddable: false
     }
   ];
@@ -51,13 +51,217 @@
     return '请用中英双语解释这个词/句，给出音标、词性、例句，并说明在英语阅读中的常见用法：' + w;
   }
 
+  /* ───────────── 离线词典：本地常用词表 + 网络词典兜底 ───────────── */
+  // 精简高频词表（英文阅读常见词），查不到再走在线接口
+  const MINI_DICT = {
+    'the': 'art. 这；那（定冠词）',
+    'a': 'art. 一；一个（不定冠词）',
+    'an': 'art. 一；一个（元音前）',
+    'and': 'conj. 和；与；而且',
+    'or': 'conj. 或者；否则',
+    'but': 'conj. 但是；prep. 除…以外',
+    'of': 'prep. …的；关于',
+    'to': 'prep. 到；向；对于',
+    'in': 'prep. 在…里面；在…期间',
+    'on': 'prep. 在…上；关于',
+    'at': 'prep. 在（某处/某时）',
+    'for': 'prep. 为了；给；因为',
+    'with': 'prep. 和…一起；带有',
+    'by': 'prep. 通过；被；在…旁边',
+    'from': 'prep. 从；来自',
+    'as': 'conj. 当…时；如同；prep. 作为',
+    'is': 'v. 是（be 的第三人称单数）',
+    'are': 'v. 是（be 的复数/第二人称）',
+    'was': 'v. 是（be 的过去式）',
+    'were': 'v. 是（be 的过去式复数）',
+    'be': 'v. 是；存在',
+    'have': 'v. 有；已经',
+    'has': 'v. 有（have 的第三人称单数）',
+    'had': 'v. 有（have 的过去式）',
+    'do': 'v. 做；aux. 助动词',
+    'does': 'v. 做（do 的第三人称单数）',
+    'did': 'v. 做（do 的过去式）',
+    'not': 'adv. 不；没有',
+    'no': 'adv. 不；adj. 没有的',
+    'yes': 'adv. 是；是的',
+    'this': 'pron. 这；这个',
+    'that': 'pron. 那；那个',
+    'these': 'pron. 这些',
+    'those': 'pron. 那些',
+    'it': 'pron. 它',
+    'he': 'pron. 他',
+    'she': 'pron. 她',
+    'they': 'pron. 他们；她们；它们',
+    'we': 'pron. 我们',
+    'you': 'pron. 你；你们',
+    'i': 'pron. 我',
+    'me': 'pron. 我（宾格）',
+    'my': 'pron. 我的',
+    'your': 'pron. 你的；你们的',
+    'his': 'pron. 他的',
+    'her': 'pron. 她的；她（宾格）',
+    'its': 'pron. 它的',
+    'our': 'pron. 我们的',
+    'their': 'pron. 他们的',
+    'what': 'pron. 什么',
+    'which': 'pron. 哪个；哪些',
+    'who': 'pron. 谁',
+    'whom': 'pron. 谁（宾格）',
+    'where': 'adv. 哪里',
+    'when': 'adv. 何时',
+    'why': 'adv. 为什么',
+    'how': 'adv. 怎样；如何',
+    'all': 'adj. 所有的；pron. 全部',
+    'some': 'adj. 一些；某个',
+    'any': 'adj. 任何；一些',
+    'each': 'adj. 每个',
+    'every': 'adj. 每个；所有的',
+    'many': 'adj. 许多',
+    'much': 'adj. 许多（不可数）',
+    'few': 'adj. 很少的',
+    'little': 'adj. 小的；很少的',
+    'more': 'adj. 更多的',
+    'most': 'adj. 最多的；大多数',
+    'one': 'num. 一；pron. 一个',
+    'two': 'num. 二',
+    'three': 'num. 三',
+    'first': 'num. 第一；adv. 首先',
+    'last': 'adj. 最后的；上一个',
+    'new': 'adj. 新的',
+    'old': 'adj. 旧的；老的',
+    'good': 'adj. 好的',
+    'bad': 'adj. 坏的',
+    'big': 'adj. 大的',
+    'small': 'adj. 小的',
+    'long': 'adj. 长的',
+    'short': 'adj. 短的；矮的',
+    'high': 'adj. 高的',
+    'low': 'adj. 低的',
+    'right': 'adj. 正确的；右边的',
+    'left': 'adj. 左边的；剩下的',
+    'up': 'adv. 向上',
+    'down': 'adv. 向下',
+    'out': 'adv. 在外；出去',
+    'over': 'prep. 在…上方；越过',
+    'under': 'prep. 在…下面',
+    'about': 'prep. 关于；大约',
+    'into': 'prep. 进入',
+    'through': 'prep. 穿过；通过',
+    'between': 'prep. 在…之间',
+    'before': 'prep. 在…之前',
+    'after': 'prep. 在…之后',
+    'now': 'adv. 现在',
+    'then': 'adv. 那时；然后',
+    'here': 'adv. 这里',
+    'there': 'adv. 那里',
+    'can': 'aux. 能；可以',
+    'could': 'aux. 能（过去式）；可能',
+    'will': 'aux. 将；愿意',
+    'would': 'aux. 将会；愿意（过去式）',
+    'should': 'aux. 应该',
+    'may': 'aux. 可以；也许',
+    'might': 'aux. 可能；也许',
+    'must': 'aux. 必须',
+    'say': 'v. 说',
+    'said': 'v. 说（say 的过去式）',
+    'go': 'v. 去；走',
+    'come': 'v. 来',
+    'get': 'v. 得到；变得',
+    'make': 'v. 制造；使得',
+    'know': 'v. 知道',
+    'think': 'v. 想；认为',
+    'see': 'v. 看见',
+    'look': 'v. 看',
+    'want': 'v. 想要',
+    'give': 'v. 给',
+    'take': 'v. 拿；带；花费',
+    'use': 'v. 使用',
+    'find': 'v. 找到；发现',
+    'tell': 'v. 告诉',
+    'ask': 'v. 问；请求',
+    'work': 'v. 工作；n. 工作',
+    'try': 'v. 尝试',
+    'need': 'v. 需要',
+    'feel': 'v. 感觉',
+    'become': 'v. 变成',
+    'leave': 'v. 离开；留下',
+    'call': 'v. 打电话；称呼',
+    'world': 'n. 世界',
+    'life': 'n. 生活；生命',
+    'time': 'n. 时间',
+    'day': 'n. 天；日',
+    'year': 'n. 年',
+    'people': 'n. 人们；人民',
+    'man': 'n. 男人；人',
+    'woman': 'n. 女人',
+    'child': 'n. 孩子',
+    'hand': 'n. 手',
+    'eye': 'n. 眼睛',
+    'head': 'n. 头',
+    'way': 'n. 路；方式',
+    'thing': 'n. 东西；事情',
+    'word': 'n. 单词；话语',
+    'water': 'n. 水',
+    'book': 'n. 书',
+    'school': 'n. 学校',
+    'read': 'v. 阅读',
+    'write': 'v. 写',
+    'study': 'v. 学习',
+    'learn': 'v. 学习；学会',
+    'teach': 'v. 教',
+    'understand': 'v. 理解；明白',
+    'remember': 'v. 记得',
+    'forget': 'v. 忘记',
+    'like': 'v. 喜欢；prep. 像',
+    'love': 'v. 爱；喜欢',
+    'help': 'v. 帮助',
+    'important': 'adj. 重要的',
+    'great': 'adj. 伟大的；很棒的',
+    'beautiful': 'adj. 美丽的',
+    'happy': 'adj. 快乐的',
+    'sad': 'adj. 悲伤的',
+    'easy': 'adj. 容易的',
+    'difficult': 'adj. 困难的',
+    'hard': 'adj. 硬的；困难的',
+    'because': 'conj. 因为',
+    'so': 'conj. 所以；如此',
+    'if': 'conj. 如果',
+    'while': 'conj. 当…时；然而',
+    'though': 'conj. 虽然',
+    'although': 'conj. 虽然；尽管',
+    'but': 'conj. 但是'
+  };
+
+  // 在线词典接口（dictionaryapi.dev，免费、支持 CORS、含音标/词性/释义）
+  function fetchDictOnline(word, cb) {
+    if (typeof fetch !== 'function') { cb(null); return; }
+    const url = 'https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word);
+    fetch(url)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => {
+        if (!Array.isArray(data) || !data[0]) { cb(null); return; }
+        const e = data[0];
+        const meanings = [];
+        (e.meanings || []).forEach(m => {
+          const defs = (m.definitions || []).slice(0, 2).map(d => d.definition);
+          if (defs.length) meanings.push('<b>' + esc(m.partOfSpeech) + '</b> ' + defs.map(esc).join('；'));
+        });
+        const ph = (e.phonetic || (e.phonetics && e.phonetics[0] && e.phonetics[0].text)) || '';
+        cb({
+          phonetic: ph,
+          html: meanings.slice(0, 3).join('<br>')
+        });
+      })
+      .catch(() => cb(null));
+  }
+
   function loadJSON(k, def) {
     try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? def : v; } catch (e) { return def; }
   }
   function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
 
   let words = loadJSON(LS_WORDS, []);
-  let aiId = loadJSON(LS_AI, 'youdao');
+  let aiId = loadJSON(LS_AI, 'bing');
   let rate = Number(loadJSON(LS_RATE, 0.95)) || 0.95;
 
   function provider(id) { return PROVIDERS.find(p => p.id === id) || PROVIDERS[0]; }
@@ -145,7 +349,7 @@
         renderBar();
       } else if (k === 'copy') {
         copy(w);
-      } else if (k === 'dict') openProvider(null, w);
+      } else if (k === 'dict') openProvider('bing', w);
       else if (k === 'ai') openProvider(aiId, w);
       else if (k === 'close') hideLookup();
     });
@@ -161,6 +365,7 @@
       '<div class="lk-word"><b>' + esc(w) + '</b>' +
       '<span>' + (cur.ctx && cur.ctx.bookName ? esc(cur.ctx.bookName) : '查词') + '</span>' +
       '<button class="lk-x" data-k="close" style="margin-left:auto;color:#8a8a96">✕</button></div>' +
+      '<div class="lk-def" id="lkDef">正在查询释义…</div>' +
       '<div class="lk-acts">' +
       '<button data-k="speak">🔊 朗读</button>' +
       '<button data-k="add">＋ 生词本</button>' +
@@ -169,6 +374,22 @@
       '<button data-k="copy">复制</button>' +
       '</div>';
     b.hidden = false;
+    // 填充内联释义：先查本地词表，再走在线词典
+    const key = w.toLowerCase().replace(/\s+/g, ' ');
+    const defEl = b.querySelector('#lkDef');
+    const local = MINI_DICT[key] || MINI_DICT[key.replace(/s$/, '')] || MINI_DICT[key.replace(/ed$/, '')] || MINI_DICT[key.replace(/ing$/, '')];
+    if (local) {
+      defEl.innerHTML = esc(local);
+    } else {
+      fetchDictOnline(w, (r) => {
+        if (!defEl.isConnected) return;
+        if (r && r.html) {
+          defEl.innerHTML = (r.phonetic ? '<span class="lk-ipa">/' + esc(r.phonetic) + '/</span> ' : '') + r.html;
+        } else {
+          defEl.innerHTML = '<span class="lk-hint">本地词典未收录，点「词典释义」或「问 AI」查看完整解释</span>';
+        }
+      });
+    }
   }
 
   function lookup(word, ctx) {
@@ -230,9 +451,18 @@
   function load(id, text) {
     const p = provider(id);
     const f = win.querySelector('#awFrame');
+    const w = text || '';
+    if (!p.embeddable) {
+      // 不可内嵌（登录墙 / CSP 拦截 / 无带词参数）→ 直接在系统浏览器打开，不显示空 iframe
+      f.style.display = 'none';
+      const url = p.url(w);
+      if (w) A.toast('正在浏览器打开「' + p.name + '」');
+      if (A.openUrl) A.openUrl(url); else window.open(url, '_blank', 'noopener');
+      return;
+    }
     f.style.display = 'block';
-    f.src = p.url(text);
-    win.dataset.pending = p.embeddable ? '' : '1';
+    f.src = p.url(w);
+    win.dataset.pending = '';
   }
 
   function openProvider(id, text) {
