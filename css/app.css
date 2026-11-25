@@ -1244,6 +1244,17 @@ svg{ display:block; }
   font-weight:900; font-style:normal; font-display:swap;
 }
 
+/* 可变字体：一个文件覆盖 200~900，字号变化时字重过渡更自然 */
+@font-face{
+  font-family:'MoYu Serif SC VF';
+  src:url('../vendor/fonts/vf/SourceHanSerifSC-VF.ttf') format('truetype-variations');
+  font-weight:200 900; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu Sans SC VF';
+  src:url('../vendor/fonts/vf/SourceHanSansSC-VF.otf') format('opentype-variations');
+  font-weight:200 900; font-style:normal; font-display:swap;
+}
 @font-face{
   font-family:'MoYu Serif SC';
   src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-ExtraLight.otf') format('opentype');
@@ -1291,6 +1302,8 @@ svg{ display:block; }
 .pg-text.font-shs{ font-family:'MoYu Sans SC','PingFang SC',sans-serif; }
 .pg-text.font-shs-b{ font-family:'MoYu Sans SC','PingFang SC',sans-serif; font-weight:700; }
 .pg-text.font-shs-l{ font-family:'MoYu Sans SC','PingFang SC',sans-serif; font-weight:300; }
+.pg-text.font-shr-vf{ font-family:'MoYu Serif SC VF','Songti SC',serif; font-weight:450; }
+.pg-text.font-shs-vf{ font-family:'MoYu Sans SC VF','PingFang SC',sans-serif; font-weight:450; }
 .pg-text.font-kai{ font-family:'Kaiti SC','STKaiti',serif; }
 .pg-text.font-yuan{ font-family:'Yuanti SC','PingFang SC',sans-serif; }
 .pg-text.font-round{ font-family:'Hiragino Maru Gothic ProN','PingFang SC',sans-serif; }

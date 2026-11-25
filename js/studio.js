@@ -2145,6 +2145,8 @@
     { id: 'shs', name: '思源黑体', cls: 'font-shs' },
     { id: 'shs-b', name: '思源黑体 粗', cls: 'font-shs-b' },
     { id: 'shs-l', name: '思源黑体 细', cls: 'font-shs-l' },
+    { id: 'shr-vf', name: '思源宋体 VF', cls: 'font-shr-vf' },
+    { id: 'shs-vf', name: '思源黑体 VF', cls: 'font-shs-vf' },
     { id: 'kai', name: '楷体', cls: 'font-kai' },
     { id: 'yuan', name: '圆体', cls: 'font-yuan' },
     { id: 'round', name: '丸体', cls: 'font-round' }
@@ -3145,6 +3147,7 @@
     on('#btnPages', 'click', openPagesPanel);
     on('#btnExport', 'click', openExportPanel);
     on('#btnMore', 'click', openMorePanel);
+    on('#btnSpeak', 'click', speakPage);
     on('#btnRead', 'click', openReader);
     on('#btnOutline', 'click', () => { if (A.Outline) A.Outline.open('outline'); });
     on('#btnRec', 'click', toggleRec);
@@ -3268,6 +3271,28 @@
       const f = Math.exp(-e.deltaY * (e.ctrlKey ? 0.0045 : 0.0016));
       zoomAt(e.clientX, e.clientY, A.clamp(f, 0.7, 1.4));
     }, { passive: false });
+  }
+
+  /* 朗读本页：PDF 用抽取出的正文，HTML 用 iframe 里的可见文字 */
+  function speakPage() {
+    if (!A.Words) return;
+    const p = S.page;
+    if (!p) return;
+    let text = (p.pdfText || '').trim();
+    if (!text && p.type === 'html' && D.frame) {
+      try {
+        const doc = D.frame.contentDocument;
+        text = doc && doc.body ? (doc.body.innerText || '').trim() : '';
+      } catch (e) { }
+    }
+    if (!text) { A.toast('这一页没有可朗读的文字'); return; }
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      A.Words.stopSpeak();
+      A.toast('已停止朗读');
+      return;
+    }
+    A.Words.speak(text.slice(0, 8000));
+    A.toast('开始朗读 · 再点一次停止', 2400);
   }
 
   function toggleHtml() {
@@ -3414,6 +3439,6 @@
     openPagesPanel, openPaperPanel, openExportPanel, insertImage, saveNow,
     openLayersPanel, toggleRec, playRec, stopRecPlay, repaintInk,
     ensureLayers, layerOf, drawSelectionBox, visibleStrokes, renderPageToCanvas,
-    deletePage, flashAnchor
+    deletePage, flashAnchor, speakPage
   };
 })(window.MY);
