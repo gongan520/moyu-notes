@@ -1208,11 +1208,50 @@ svg{ display:block; }
   font-weight:300; font-style:normal; font-display:swap;
 }
 
+@font-face{
+  font-family:'MoYu Serif SC';
+  src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-ExtraLight.otf') format('opentype');
+  font-weight:200; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu Serif SC';
+  src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-Light.otf') format('opentype');
+  font-weight:300; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu Serif SC';
+  src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-Regular.otf') format('opentype');
+  font-weight:400; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu Serif SC';
+  src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-Medium.otf') format('opentype');
+  font-weight:500; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu Serif SC';
+  src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-SemiBold.otf') format('opentype');
+  font-weight:600; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu Serif SC';
+  src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-Bold.otf') format('opentype');
+  font-weight:700; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu Serif SC';
+  src:url('../vendor/fonts/serif-sc/SourceHanSerifSC-Heavy.otf') format('opentype');
+  font-weight:900; font-style:normal; font-display:swap;
+}
+
 /* 文字框字体：默认跟随系统，选内置手写体时才加对应 class */
 .pg-text{ font-family:-apple-system,"PingFang SC",sans-serif; }
 .pg-text.font-wenkai{ font-family:'MoYu WenKai','PingFang SC',serif; }
 .pg-text.font-wenkaigb{ font-family:'MoYu WenKai GB','PingFang SC',serif; }
 .pg-text.font-song{ font-family:'Songti SC','SimSun',serif; }
+.pg-text.font-shr{ font-family:'MoYu Serif SC','Songti SC',serif; letter-spacing:.2px; }
+.pg-text.font-shr-b{ font-family:'MoYu Serif SC','Songti SC',serif; font-weight:700; }
+.pg-text.font-shr-l{ font-family:'MoYu Serif SC','Songti SC',serif; font-weight:300; }
 .pg-text.font-kai{ font-family:'Kaiti SC','STKaiti',serif; }
 .pg-text.font-yuan{ font-family:'Yuanti SC','PingFang SC',sans-serif; }
 .pg-text.font-round{ font-family:'Hiragino Maru Gothic ProN','PingFang SC',sans-serif; }

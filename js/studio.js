@@ -601,6 +601,8 @@
       await persistPage(true);
       A.toast('录音已保存，' + A.Record.fmt(info.dur) + '（回放时笔迹会跟着重现）', 3600);
     }
+    // 录完不能把浮条一起收掉，否则用户找不到 ▶ 回放
+    if (p && p.rec) { showRecBar(true); if (D.recPlay) D.recPlay.disabled = false; }
     return info;
   }
 
@@ -1969,10 +1971,13 @@
     const below = r.top + S.view.y + (by + bh) * S.view.scale + 14;
     const py = below;
     const el = D.ctxFloat;
+    // 记下滚动位置：浮条挪到位时浏览器会把它滚进视口，画面会"跳一下"
+    const sl = { x: D.stage.scrollLeft, y: D.stage.scrollTop };
     el.style.left = (px - host.left) + 'px';
     el.style.top = (py - host.top) + 'px';
     // 下方放不下（贴着工具栏）时翻到上方更远处
     requestAnimationFrame(() => {
+      D.stage.scrollLeft = sl.x; D.stage.scrollTop = sl.y;
       const er = el.getBoundingClientRect();
       if (er.bottom > window.innerHeight - 8) {
         el.style.top = (r.top + S.view.y + by * S.view.scale - 56 - host.top) + 'px';
@@ -2050,6 +2055,9 @@
     { id: 'wenkai', name: '手写楷体', cls: 'font-wenkai' },
     { id: 'wenkaigb', name: '国标楷体', cls: 'font-wenkaigb' },
     { id: 'song', name: '宋体', cls: 'font-song' },
+    { id: 'shr', name: '思源宋体', cls: 'font-shr' },
+    { id: 'shr-b', name: '思源宋体 粗', cls: 'font-shr-b' },
+    { id: 'shr-l', name: '思源宋体 细', cls: 'font-shr-l' },
     { id: 'kai', name: '楷体', cls: 'font-kai' },
     { id: 'yuan', name: '圆体', cls: 'font-yuan' },
     { id: 'round', name: '丸体', cls: 'font-round' }
@@ -3243,18 +3251,24 @@
       }
       pages.push(p);
     }
-    // 整本书的标题清单留给大纲做初值
+    // 整本书的标题清单留给大纲做初值。
+    // 原来一页只取第一个标题，长文里的 h2/h3 全被吞掉 → 大纲永远只有几条
     if (heads.length) {
       book.outline = [];
-      pages.forEach(p => {
-        if (p.heading) {
-          book.outline.push({
-            id: 'ol_' + p.id,
-            text: p.heading,
-            pageId: p.id,
-            level: Math.min(4, Math.max(1, p.headingLevel || 1))
-          });
-        }
+      const seen = new Set();
+      heads.forEach((hd, k) => {
+        const txt = (hd[2] || '').trim();
+        if (!txt || seen.has(txt)) return;
+        seen.add(txt);
+        const i = Math.max(0, Math.min(pages.length - 1, Math.floor(hd[0] / HTML_SLICE_H)));
+        const pg = pages[i];
+        if (!pg) return;
+        book.outline.push({
+          id: 'ol_' + pg.id + '_' + k,
+          text: txt,
+          pageId: pg.id,
+          level: Math.min(4, Math.max(1, hd[1] || 1))
+        });
       });
       await A.db.saveBook(book);
     }
@@ -3313,6 +3327,6 @@
     openPagesPanel, openPaperPanel, openExportPanel, insertImage, saveNow,
     openLayersPanel, toggleRec, playRec, stopRecPlay, repaintInk,
     ensureLayers, layerOf, drawSelectionBox, visibleStrokes, renderPageToCanvas,
-    deletePage
+    deletePage, flashAnchor
   };
 })(window.MY);

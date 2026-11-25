@@ -1,5 +1,5 @@
 /* 墨屿 — service worker（离线可用） */
-const CACHE = 'moyu-v1';
+const CACHE = 'moyu-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -12,6 +12,12 @@ const ASSETS = [
   './js/pdf.js',
   './js/library.js',
   './js/studio.js',
+  './js/search.js',
+  './js/outline.js',
+  './js/flashcard.js',
+  './js/backup.js',
+  './js/record.js',
+  './js/pdfimport.js',
   './js/boot.js',
   './assets/icon-180.png'
 ];

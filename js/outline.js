@@ -87,12 +87,14 @@
       if (!St.S.book) return;
       const auto = autoExtract();
       const cur = nodeList(St.S.book);
-      // 保留手动条目的顺序信息：自动结果只补空缺
-      St.S.book.outline = auto;
+      // 手工写的大纲不能被覆盖：同名条目跳过，新条目追加在后面
+      const seen = new Set(cur.map(n => (n.text || '').trim()));
+      const extra = auto.filter(n => n && n.text && !seen.has(n.text.trim()));
+      St.S.book.outline = cur.concat(extra);
       save();
       mindView = { x: 0, y: 0, k: 1 };
       render();
-      A.toast('已按页面内容生成 ' + auto.length + ' 条大纲');
+      A.toast('已按页面内容补充 ' + extra.length + ' 条大纲（原有 ' + cur.length + ' 条保留）');
       void cur;
     });
     host.querySelector('#ovAdd').addEventListener('click', () => {
@@ -325,7 +327,8 @@
         if (idx >= 0) { St.goPage(idx); close(); }
       });
 
-      node.x = x + tw; // 出线点
+      node.outX = x + tw; // 出线点
+      node.x = x + tw;
       node.cx = x;
       gNodes.appendChild(g);
       return node;
@@ -335,7 +338,7 @@
       pill(node);
       node.children.forEach(c => {
         walk(c);
-        edge(node.x != null ? node.x : 0, 40 + node.y, c.cx, 40 + c.y);
+        edge(node.outX != null ? node.outX : (node.cx + 60), 40 + node.y, c.cx, 40 + c.y);
       });
     }
     walk(root);
@@ -345,25 +348,33 @@
     // 拖动平移
     let down = null;
     svg.addEventListener('pointerdown', (e) => {
-      down = { x: e.clientX, y: e.clientY, vx: mindView.x, vy: mindView.y };
-      svg.setPointerCapture(e.pointerId);
+      // 先别急着 capture：capture 之后 pointerup 也落在 svg 上，
+      // 节点的 click 永远不触发（点大纲节点跳页会失效）
+      down = { x: e.clientX, y: e.clientY, vx: mindView.x, vy: mindView.y, id: e.pointerId, cap: false };
     });
     svg.addEventListener('pointermove', (e) => {
       if (!down) return;
-      mindView.x = down.vx + (e.clientX - down.x);
-      mindView.y = down.vy + (e.clientY - down.y);
+      const dx = e.clientX - down.x, dy = e.clientY - down.y;
+      // 手真正拖起来了才接管指针，轻点留给节点自己
+      if (!down.cap && Math.abs(dx) + Math.abs(dy) > 5) {
+        down.cap = true;
+        try { svg.setPointerCapture(e.pointerId); } catch (err) { }
+      }
+      if (!down.cap) return;
+      mindView.x = down.vx + dx;
+      mindView.y = down.vy + dy;
       svg.style.transform = 'translate(' + mindView.x + 'px,' + mindView.y + 'px) scale(' + mindView.k + ')';
     });
     svg.addEventListener('pointerup', () => { down = null; });
     svg.addEventListener('pointercancel', () => { down = null; });
     // 双指缩放：iPad 上没有 Ctrl+滚轮，靠两指触控
     let pinch = null;
-    mapBox.addEventListener('touchstart', (e) => {
+    box.addEventListener('touchstart', (e) => {
       if (e.touches.length !== 2) return;
       const [a, b] = e.touches;
       pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), k: mindView.k };
     }, { passive: true });
-    mapBox.addEventListener('touchmove', (e) => {
+    box.addEventListener('touchmove', (e) => {
       if (!pinch || e.touches.length !== 2) return;
       const [a, b] = e.touches;
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
@@ -371,7 +382,7 @@
       mindView.k = A.clamp(pinch.k * (d / pinch.d), 0.35, 2.4);
       svg.style.transform = 'translate(' + mindView.x + 'px,' + mindView.y + 'px) scale(' + mindView.k + ')';
     }, { passive: true });
-    mapBox.addEventListener('touchend', () => { pinch = null; }, { passive: true });
+    box.addEventListener('touchend', () => { pinch = null; }, { passive: true });
 
     svg.addEventListener('wheel', (e) => {
       if (!e.ctrlKey && !e.metaKey) return;

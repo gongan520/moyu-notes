@@ -38,6 +38,8 @@ img{-webkit-user-drag:none;}
     }
     return out;
   }
+  try{ window.__moyu_scan_heads = heads; }catch(e){}
+  var lastHeads=0;
   function measure(){
     var d=document.documentElement, b=document.body;
     if(!d||!b) return;
@@ -50,9 +52,12 @@ img{-webkit-user-drag:none;}
       b?b.getBoundingClientRect().height:0
     );
     h=Math.ceil(h||0);
-    if(h>0 && Math.abs(h-last)>1){
-      last=h;
-      try{ parent.postMessage({__moyu_h:h, __moyu_heads:heads()},'*'); }catch(e){}
+    // 高度没变但标题变多了，也要再报一次：
+    // 否则首屏只解析出 h1 时上报，之后 h2/h3 再也送不出去，大纲只剩一条
+    var hd=heads();
+    if(h>0 && (Math.abs(h-last)>1 || hd.length>lastHeads)){
+      last=h; lastHeads=hd.length;
+      try{ parent.postMessage({__moyu_h:h, __moyu_heads:hd},'*'); }catch(e){}
     }
   }
   function schedule(){
@@ -217,6 +222,7 @@ img{-webkit-user-drag:none;}
           routed.set(win, {
             frame: frame,
             onHeight: (h) => { lastH = h; if (cbs.onHeight) cbs.onHeight(h); },
+            onHeads: cbs.onHeads,
             onLink: cbs.onLink,
             onHash: cbs.onHash
           });

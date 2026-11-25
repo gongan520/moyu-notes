@@ -61,7 +61,7 @@
           index.push({
             bookId: b.id, bookName: b.name || '未命名',
             pageId: pages.length ? pages[0].id : null,
-            pageOrder: 0, src: '网页', text: htmlText
+            pageOrder: -1, src: '网页', text: htmlText
           });
         }
 
@@ -175,8 +175,16 @@
         close();
         const St = A.Studio;
         if (St.S.book && St.S.book.id === hit.bookId) {
-          const idx = St.S.pages.findIndex(p => p.id === hit.pageId);
-          if (idx >= 0) { St.goPage(idx); return; }
+          // 用 order 兜底：页序被挪过之后 pageId 还能对上，order 只作备份
+          let idx = St.S.pages.findIndex(p => p.id === hit.pageId);
+          if (idx < 0 && hit.pageOrder >= 0) idx = hit.pageOrder;
+          if (idx >= 0 && idx < St.S.pages.length) {
+            St.goPage(idx);
+            setTimeout(() => {
+              if (St.flashAnchor) St.flashAnchor(0, 0, St.S.page.w, St.S.page.h);
+            }, 260);
+            return;
+          }
         }
         A.Studio.openBook(hit.bookId).then(() => {
           if (!hit.pageId) return;
