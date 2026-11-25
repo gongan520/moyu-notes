@@ -4,7 +4,19 @@
 (function (A) {
   'use strict';
 
+  function applyThemeEarly() {
+    // 首帧之前就定好主题，避免深色闪一下白
+    let m = 'dark';
+    try { m = localStorage.getItem('moyu_theme') || 'dark'; } catch (e) { }
+    document.documentElement.setAttribute('data-theme', m);
+    if (m === 'light') {
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', '#f2f2f5');
+    }
+  }
+
   function boot() {
+    applyThemeEarly();
     A.Library.init();
     A.Studio.init();
 

@@ -197,31 +197,30 @@
     const nav = A.$('#libNav');
     if (!nav) return;
     const t = trail();
-    let html = '<div class="crumb-trail">';
-    html += '<button class="crumb-seg" data-fid="root">书架</button>';
-    t.forEach((f, i) => {
-      html += '<span class="crumb-sep">/</span>';
-      html += i === t.length - 1
-        ? '<span class="crumb-cur">' + esc(f.name) + '</span>'
-        : '<button class="crumb-seg" data-fid="' + f.id + '">' + esc(f.name) + '</button>';
-    });
-    html += '</div><div class="lib-nav-acts">';
-    html += '<button class="chip-f" id="btnNewFolder">新建文件夹</button>';
-    html += '<button class="chip-f' + (S.starOnly ? ' is-on' : '') + '" id="btnStarFilter">★ 收藏</button>';
-    html += '</div>';
-    nav.innerHTML = html;
+    const curF = t.length ? t[t.length - 1] : null;
+    const title = A.$('#libTitle');
+    if (title) title.textContent = curF ? curF.name : '我';
 
-    A.$$('.crumb-seg', nav).forEach(b => b.addEventListener('click', () => {
+    // 文件夹按父级递归展开，缩进最多三级，够看清层级
+    let html = '<button class="side-folder' + (S.folderId === 'root' ? ' is-on' : '') + '" data-fid="root">' +
+      '<span class="dot"></span><span>全部笔记</span><span class="cnt">' + S.books.length + '</span></button>';
+    function walk(pid, depth) {
+      S.folders.filter(f => (f.parentId || 'root') === pid).forEach(f => {
+        const n = S.books.filter(b => (b.folderId || 'root') === f.id).length;
+        html += '<button class="side-folder ind-' + Math.min(3, depth) + (S.folderId === f.id ? ' is-on' : '') +
+          '" data-fid="' + f.id + '"><span class="dot"></span><span>' + esc(f.name) + '</span>' +
+          '<span class="cnt">' + n + '</span></button>';
+        walk(f.id, depth + 1);
+      });
+    }
+    walk('root', 1);
+    nav.innerHTML = html;
+    A.$$('.side-folder', nav).forEach(b => b.addEventListener('click', () => {
       S.folderId = b.dataset.fid;
+      S.starOnly = false;
+      setNavActive('notes');
       render();
     }));
-    const nf = A.$('#btnNewFolder', nav);
-    if (nf) nf.addEventListener('click', newFolder);
-    const sf = A.$('#btnStarFilter', nav);
-    if (sf) sf.addEventListener('click', () => {
-      S.starOnly = !S.starOnly;
-      render();
-    });
   }
 
   function render() {
@@ -890,17 +889,211 @@
     A.sheet.open({ title: '使用说明', node });
   }
 
+  /* ───── 主题：深色 / 浅色 / 跟随系统 ───── */
+  const LS_THEME = 'moyu_theme';
+  const THEMES = [
+    { id: 'dark', name: '深色' },
+    { id: 'light', name: '浅色' },
+    { id: 'auto', name: '跟随系统' }
+  ];
+  let themeMode = 'dark';
+  try { themeMode = localStorage.getItem(LS_THEME) || 'dark'; } catch (e) { }
+
+  function applyTheme(mode) {
+    themeMode = mode;
+    try { localStorage.setItem(LS_THEME, mode); } catch (e) { }
+    document.documentElement.setAttribute('data-theme', mode);
+    const t = THEMES.find(x => x.id === mode) || THEMES[0];
+    const lab = A.$('#themeLabel');
+    if (lab) lab.textContent = t.name;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      const light = mode === 'light' ||
+        (mode === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+      meta.setAttribute('content', light ? '#f2f2f5' : '#111113');
+    }
+  }
+
+  function cycleTheme() {
+    const i = THEMES.findIndex(t => t.id === themeMode);
+    applyTheme(THEMES[(i + 1) % THEMES.length].id);
+    A.toast('主题：' + (THEMES.find(t => t.id === themeMode) || THEMES[0]).name);
+  }
+
+  function setNavActive(key) {
+    A.$$('#sideNav .side-item').forEach(b => b.classList.toggle('is-on', b.dataset.nav === key));
+  }
+
+  /* ───── 新建：轻触空白笔记，长按出更多入口 ───── */
+  function newSheet() {
+    const node = A.el('div');
+    const items = [
+      { a: 'blank', t: '空白笔记', s: 'A4 横线纸，直接开始写', i: 'M12 5v14M5 12h14' },
+      { a: 'tpl', t: '从模板开始', s: '康奈尔 / 会议 / 读书 / 周计划…', i: 'M4 3h16v18H4z M8 8h8M8 12h8' },
+      { a: 'import', t: '导入文件', s: 'HTML / PDF / Markdown / 图片，自动识别', i: 'M12 16V4m0 12l-4-4m4 4l4-4' },
+      { a: 'folder', t: '新建文件夹', s: '整理当前书架', i: 'M3.5 7.5h17v10h-17z' }
+    ];
+    node.innerHTML = '<div class="list">' + items.map(x =>
+      '<button class="list-item" data-a="' + x.a + '"><svg class="ico" viewBox="0 0 24 24"><path d="' + x.i + '"/></svg>' +
+      '<span class="li-grow" style="text-align:left">' + x.t +
+      '<span style="display:block;font-size:12px;color:#8a8a96;margin-top:2px">' + x.s + '</span></span></button>'
+    ).join('') + '</div>';
+    A.sheet.open({ title: '新建', sub: '选一种开始方式', node, onMount: (body, sh) => {
+      A.$$('[data-a]', body).forEach(b => b.addEventListener('click', () => {
+        const a = b.dataset.a;
+        sh.close();
+        setTimeout(() => {
+          if (a === 'blank') newBook();
+          else if (a === 'tpl') openTemplates();
+          else if (a === 'import') { const inp = A.$('#fileAny'); if (inp) inp.click(); }
+          else if (a === 'folder') newFolder();
+        }, 180);
+      }));
+    } });
+  }
+
+  function bindNewButton() {
+    const btn = A.$('#btnNewBook');
+    if (!btn) return;
+    let timer = null, fired = false;
+    btn.addEventListener('pointerdown', () => {
+      fired = false;
+      timer = setTimeout(() => { fired = true; newSheet(); }, 520);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev =>
+      btn.addEventListener(ev, () => clearTimeout(timer)));
+    btn.addEventListener('click', (e) => {
+      if (fired) { e.preventDefault(); e.stopPropagation(); fired = false; return; }
+      newBook();
+    });
+  }
+
+  /* ───── 导入：一个入口按扩展名自动分流 ───── */
+  function mdToHtml(text, name) {
+    const esc2 = t => t.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+    const lines = text.replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let inList = false, inCode = false;
+    const closeList = () => { if (inList) { out.push('</ul>'); inList = false; } };
+    lines.forEach(raw => {
+      let l = raw;
+      if (/^```/.test(l)) { closeList(); inCode = !inCode; out.push(inCode ? '<pre><code>' : '</code></pre>'); return; }
+      if (inCode) { out.push(esc2(l)); return; }
+      const h = l.match(/^(#{1,4})\s+(.*)$/);
+      if (h) { closeList(); out.push('<h' + h[1].length + '>' + esc2(h[2]) + '</h' + h[1].length + '>'); return; }
+      if (/^\s*[-*+]\s+/.test(l)) { if (!inList) { out.push('<ul>'); inList = true; } out.push('<li>' + esc2(l.replace(/^\s*[-*+]\s+/, '')) + '</li>'); return; }
+      closeList();
+      if (!l.trim()) return;
+      out.push('<p>' + esc2(l) + '</p>');
+    });
+    closeList();
+    return '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
+      '<style>body{margin:0;padding:52px 56px;font:16px/1.85 -apple-system,"PingFang SC",serif;color:#222}h1,h2,h3,h4{line-height:1.4;margin:24px 0 10px}h1{font-size:28px}p{margin:10px 0}pre{background:#f5f5f7;padding:12px;border-radius:8px;overflow:auto}code{font-family:ui-monospace,Menlo,monospace;font-size:13px}li{margin:4px 0}</style>' +
+      out.join('\n') + '</body></html>';
+  }
+
+  async function importAny(files) {
+    if (!files || !files.length) return;
+    A.busy('正在识别文件…');
+    let opened = null, n = 0;
+    try {
+      for (const f of files) {
+        const name = f.name || 'file';
+        const ext = (name.split('.').pop() || '').toLowerCase();
+        if (ext === 'html' || ext === 'htm' || f.type === 'text/html') {
+          const text = await A.readText(f);
+          if (text && text.trim()) {
+            const id = await A.Studio.createHtmlBook(text, name.replace(/\.html?$/i, '') || 'HTML 笔记');
+            opened = opened || id; n++;
+          }
+        } else if (ext === 'pdf' || f.type === 'application/pdf') {
+          if (!A.PdfImport) { A.toast('PDF 模块未加载'); continue; }
+          A.busy('正在导入 PDF…');
+          const id = await A.PdfImport.importFile(f);
+          A.busy('正在识别文件…');
+          if (id) { opened = opened || id; n++; }
+        } else if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
+          const text = await A.readText(f);
+          if (text && text.trim()) {
+            const id = await A.Studio.createHtmlBook(mdToHtml(text, name), name.replace(/\.[^.]+$/, '') || '文本笔记');
+            opened = opened || id; n++;
+          }
+        } else if (/^image\//.test(f.type || '')) {
+          const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+          const html = '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">' +
+            '<img src="' + dataUrl + '" style="display:block;width:1024px;height:auto"></body></html>';
+          const id = await A.Studio.createHtmlBook(html, name.replace(/\.[^.]+$/, '') || '图片笔记');
+          opened = opened || id; n++;
+        } else {
+          A.toast('暂不支持这种文件：' + name);
+        }
+      }
+      A.busy(false);
+      await refresh();
+      if (opened) {
+        A.toast(n > 1 ? ('已导入 ' + n + ' 个文件') : '导入完成');
+        A.Studio.openBook(opened);
+      } else if (!n) {
+        A.toast('没有可导入的文件');
+      }
+    } catch (e) {
+      A.busy(false);
+      A.toast('导入失败：' + (e.message || ''));
+    }
+  }
+
   /* ───── 绑定 ───── */
   function init() {
     const bind = (sel, fn) => { const n = A.$(sel); if (n) n.addEventListener('click', fn); };
-    bind('#btnNewBook', () => newBook());
+    applyTheme(themeMode);
+    bindNewButton();
+    bind('#btnShelfMore', newSheet);
+    // 收藏筛选（原先是导航里的 chip，现在收进侧栏"笔记"再点一次）
+    bind('#btnStarFilter', () => { S.starOnly = !S.starOnly; render(); });
     bind('#btnEmptyNew', () => newBook());
-    bind('#btnImportHtml', () => A.$('#fileHtml').click());
-    bind('#btnEmptyImport', () => A.$('#fileHtml').click());
+    bind('#btnEmptyImport', () => { const inp = A.$('#fileAny'); if (inp) inp.click(); });
     bind('#btnTemplates', openTemplates);
+    bind('#btnThemeMode', cycleTheme);
+    bind('#btnHelp', help);
+    bind('#btnNewFolderSide', newFolder);
+    bind('#btnSideToggle', () => {
+      document.body.classList.toggle('side-hidden');
+      const o = A.$('#btnSideOpen');
+      if (o) o.hidden = !document.body.classList.contains('side-hidden');
+    });
+    bind('#btnSideOpen', () => {
+      document.body.classList.remove('side-hidden');
+      const o = A.$('#btnSideOpen'); if (o) o.hidden = true;
+    });
+    bind('#wdClose', () => A.Words && A.Words.closeDrawer());
+    bind('#wdCards', () => A.Words && A.Words.makeCards());
+    bind('#wdClear', () => {
+      if (!A.Words) return;
+      A.Words.clear(); A.Words.renderDrawer();
+      A.toast('生词本已清空');
+    });
+    bind('#btnImportHtml', () => { const inp = A.$('#fileAny'); if (inp) inp.click(); });
     bind('#btnImportPdf', () => {
       if (A.PdfImport) A.PdfImport.pick();
       else A.toast('PDF 模块未加载');
+    });
+
+    // 左侧导航
+    A.$$('#sideNav .side-item').forEach(b => b.addEventListener('click', () => {
+      const k = b.dataset.nav;
+      setNavActive(k);
+      if (k === 'words') { if (A.Words) A.Words.openDrawer(); return; }
+      S.folderId = 'root';
+      S.starOnly = (k === 'star');
+      render();
+    }));
+
+    // 自动识别导入
+    const fa = A.$('#fileAny');
+    if (fa) fa.addEventListener('change', async () => {
+      const files = Array.prototype.slice.call(fa.files || []);
+      fa.value = '';
+      await importAny(files);
     });
 
     // 书架搜索框：回车直接进整库全文搜索（书名没命中时也能搜到内容）
@@ -952,7 +1145,7 @@
         if (!document.getElementById('viewLibrary').classList.contains('is-active')) return;
         e.preventDefault();
         if (ev === 'drop' && e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
-          importFiles(Array.prototype.slice.call(e.dataTransfer.files));
+          importAny(Array.prototype.slice.call(e.dataTransfer.files));
         }
       });
     });

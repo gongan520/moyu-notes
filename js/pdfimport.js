@@ -157,11 +157,34 @@
       const key = ASSET_PREFIX + i;
       await A.db.putAsset(key, dataUrl);
 
-      // 顺手抽出这一页的文字，整库搜索就能搜到 PDF 里的内容
+      // 顺手抽出这一页的文字，整库搜索就能搜到 PDF 里的内容；
+      // 同时记下每个单词的坐标，长按取词才能定位到"手指底下那个词"
       let pageText = '';
+      let pageWords = [];
       try {
         const tc = await page.getTextContent();
         pageText = tc.items.map(it => it.str).join(' ').replace(/\s+/g, ' ').trim().slice(0, 4000);
+        for (const it of (tc.items || [])) {
+          const str = it.str || '';
+          if (!str.trim() || !isFinite(it.width) || it.width <= 0) continue;
+          const m = lib.Util.transform(vp1.transform, it.transform);
+          const bx = m[4];
+          const by = m[5] - (it.height || 10);
+          const per = it.width / Math.max(1, str.length);
+          const re = /[A-Za-z][A-Za-z'’-]*/g;
+          let mm;
+          while ((mm = re.exec(str))) {
+            pageWords.push({
+              t: mm[0],
+              x: Math.round(bx + per * mm.index),
+              y: Math.round(by),
+              w: Math.max(4, Math.round(per * mm[0].length)),
+              h: Math.round((it.height || 10) * 1.4)
+            });
+            if (pageWords.length > 1500) break;
+          }
+          if (pageWords.length > 1500) break;
+        }
       } catch (e) { }
 
       pages.push({
@@ -178,6 +201,7 @@
         pdfPage: i,
         pdfTotal: total,
         pdfText: pageText,
+        pdfWords: pageWords,
         strokes: [],
         texts: [],
         images: []

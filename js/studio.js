@@ -1155,6 +1155,75 @@
 
   /* ═════════════ 指针 / 手势 ═════════════ */
 
+  /* ───────────── 长按取词（英语阅读） ───────────── */
+  let lpTimer = 0, lpStart = null, lpFired = false;
+
+  function clearLookupTimer() { clearTimeout(lpTimer); lpTimer = 0; lpStart = null; }
+
+  function wordAtPoint(pt, cx, cy) {
+    const p = S.page;
+    if (!p) return null;
+    if (Array.isArray(p.pdfWords) && p.pdfWords.length) {
+      let best = null, bestA = 1e9;
+      for (const w of p.pdfWords) {
+        if (pt.x >= w.x - 3 && pt.x <= w.x + w.w + 4 && pt.y >= w.y - 3 && pt.y <= w.y + w.h + 4) {
+          const a = w.w * w.h;   // 命中多个时取面积最小的，避免大字块盖住小词
+          if (a < bestA) { best = w; bestA = a; }
+        }
+      }
+      if (best) return best.t;
+    }
+    if (p.type === 'html' && D.frame) {
+      try {
+        const doc = D.frame.contentDocument;
+        if (!doc) return null;
+        const r = D.frame.getBoundingClientRect();
+        const x = cx - r.left, y = cy - r.top;
+        let node = null, off = 0;
+        if (doc.caretPositionFromPoint) {
+          const c = doc.caretPositionFromPoint(x, y);
+          if (c) { node = c.offsetNode; off = c.offset; }
+        } else if (doc.caretRangeFromPoint) {
+          const c = doc.caretRangeFromPoint(x, y);
+          if (c) { node = c.startContainer; off = c.startOffset; }
+        }
+        if (node && node.nodeType === 3) {
+          const txt = node.nodeValue || '';
+          const ok = ch => /[A-Za-z'’-]/.test(ch);
+          let a = off, b = off;
+          while (a > 0 && ok(txt[a - 1])) a--;
+          while (b < txt.length && ok(txt[b])) b++;
+          const w = txt.slice(a, b).replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '');
+          if (w.length > 1) return w;
+        }
+      } catch (err) { }
+    }
+    return null;
+  }
+
+  function armLookup(e, pt) {
+    const p = S.page;
+    if (!p) return;
+    const hasWords = Array.isArray(p.pdfWords) && p.pdfWords.length;
+    if (!hasWords && p.type !== 'html') return;
+    if (S.tool === 'shape' || S.tool === 'text' || S.tool === 'hand') return;
+    lpFired = false;
+    lpStart = { x: e.clientX, y: e.clientY, pt: pt, cx: e.clientX, cy: e.clientY };
+    clearTimeout(lpTimer);
+    lpTimer = setTimeout(() => {
+      const st = lpStart;
+      lpTimer = 0;
+      if (!st) return;
+      const w = wordAtPoint(st.pt, st.cx, st.cy);
+      if (!w) return;
+      lpFired = true;
+      if (S.stroke) discardStroke();
+      A.Words && A.Words.lookup(w, {
+        bookName: S.book && S.book.name, pageId: p.id, speak: true
+      });
+    }, 520);
+  }
+
   function isTouchPan(e) {
     return e.pointerType === 'touch' && S.penOnly && S.penSeen;
   }
@@ -1179,6 +1248,7 @@
 
     const inside = isInsidePage(e.clientX, e.clientY);
     const pt = toPage(e.clientX, e.clientY);
+    if (inside) armLookup(e, pt);
 
     // 取色器：点一下取色，不落笔
     if (S.picking) {
@@ -1250,6 +1320,7 @@
   }
 
   function onPointerMove(e) {
+    if (lpStart && Math.hypot(e.clientX - lpStart.x, e.clientY - lpStart.y) > 8) clearLookupTimer();
     if (S.pointers.has(e.pointerId)) {
       const rec = S.pointers.get(e.pointerId);
       rec.x = e.clientX; rec.y = e.clientY;
@@ -1327,6 +1398,15 @@
 
   function onPointerUp(e) {
     S.pointers.delete(e.pointerId);
+    // 长按已经弹了查词，这一下不算笔迹
+    if (lpFired) {
+      lpFired = false;
+      clearLookupTimer();
+      if (S.stroke) discardStroke();
+      S.mode = null; S.drawId = null;
+      return;
+    }
+    clearLookupTimer();
 
     if (S.gesture) {
       if (S.pointers.size < 2) {
