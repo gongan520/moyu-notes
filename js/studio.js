@@ -777,11 +777,12 @@
 
   function qualityFor(w, h) {
     const dpr = Math.min(2.5, window.devicePixelRatio || 1);
-    const z = A.clamp(S.view.scale, 1, 1.7);
+    // 用真实视图缩放算采样率：放到 400% 还按 1.4 倍备份，笔迹一定发虚
+    const z = A.clamp(S.view.scale, 1, 3);
     const area = w * h;
     // 面积越大，质量倍数越低，控制内存（iPad 上三层画布很吃内存）
     let q = dpr * z;
-    const maxArea = 6.5e6;
+    const maxArea = 8.5e6;
     if (area * q * q > maxArea) q = Math.sqrt(maxArea / area);
     return A.clamp(q, 1, 3);
   }
@@ -975,7 +976,7 @@
     zoomTimer = setTimeout(() => {
       const { w, h } = pageSize();
       const q = qualityFor(w, h);
-      if (Math.abs(q - S.quality) > 0.34) {
+      if (Math.abs(q - S.quality) > 0.18) {
         resizeCanvases();
       }
     }, 320);
@@ -1262,7 +1263,10 @@
       const pt = toPage(e.clientX, e.clientY);
       const dx = pt.x - S.dragSel.last.x, dy = pt.y - S.dragSel.last.y;
       if (Math.abs(dx) + Math.abs(dy) > 0.01) {
-        S.sel.strokes.forEach(s => s.pts.forEach(q => { q.x += dx; q.y += dy; }));
+        S.sel.strokes.forEach(s => {
+          s.pts.forEach(q => { q.x += dx; q.y += dy; });
+          s._sm = null;   // 不清缓存的密化点，画面会原地不动
+        });
         S.sel.bbox = moveBBox(S.sel.bbox, dx, dy);
         S.dragSel.acc.x += dx;
         S.dragSel.acc.y += dy;
@@ -1451,7 +1455,11 @@
     const a = R.angle * Math.PI / 180;
     const dx = Math.cos(a), dy = Math.sin(a);
     const t = (pt.x - cx) * dx + (pt.y - cy) * dy;
-    return { x: cx + dx * t, y: cy + dy * t };
+    const nx = cx + dx * t, ny = cy + dy * t;
+    // 只有笔尖离尺线足够近才吸附，否则尺子会"吸住"整页
+    const keep = Math.max(10, S.size * 1.5);
+    if (Math.hypot(pt.x - nx, pt.y - ny) > keep) return pt;
+    return { x: nx, y: ny };
   }
 
   function placeRuler() {
@@ -1568,10 +1576,9 @@
   }
 
   function paintLive(s) {
-    // 不透明笔用渐进提交，避免每帧重画整笔
-    const opaque = (s.tool === 'pen' || s.tool === 'pencil');
     const g = D.liveCv.getContext('2d');
-    if (opaque) {
+    if (s.tool === 'pen') {
+      // 不透明笔（钢笔/圆珠笔）渐进提交，避免每帧重画整笔
       const sm = (s._sm || (s._sm = A.Ink.densify(A.Ink.smoothPressure(s.pts))));
       const n = sm.length;
       if (n - s._committed > 46) {
@@ -1579,22 +1586,34 @@
         const bg = D.baseCv.getContext('2d');
         bg.save();
         bg.globalCompositeOperation = 'source-over';
-        bg.globalAlpha = s.tool === 'pencil' ? 0.86 : 1;
-        bg.fillStyle = s.color;
+        bg.globalAlpha = 1;
         A.Ink.drawPartial(bg, s, Math.max(0, s._committed - 1), to);
         bg.restore();
         s._committed = to;
       }
       clearLive();
       g.save();
-      g.globalAlpha = s.tool === 'pencil' ? 0.86 : 1;
-      g.fillStyle = s.color;
+      g.globalAlpha = 1;
       A.Ink.drawPartial(g, s, Math.max(0, s._committed - 1), sm.length);
       g.restore();
-    } else {
-      clearLive();
-      A.Ink.drawStroke(g, s);
+      return;
     }
+    if (s.tool === 'eraser') {
+      // 像素橡皮必须边拖边把墨迹层擦掉，否则手指底下毫无反馈
+      const sm = (s._sm || (s._sm = A.Ink.densify(A.Ink.smoothPressure(s.pts))));
+      const bg = D.baseCv.getContext('2d');
+      bg.save();
+      bg.globalCompositeOperation = 'destination-out';
+      bg.globalAlpha = 1;
+      A.Ink.drawPartial(bg, s, Math.max(0, (s._committed || 0) - 1), sm.length);
+      bg.restore();
+      s._committed = sm.length;
+      clearLive();
+      return;
+    }
+    // 半透明笔（荧光笔/铅笔）整笔重绘：分片提交会在切片重叠处叠出深色接缝
+    clearLive();
+    A.Ink.drawStroke(g, s);
   }
 
   function finishStroke() {
@@ -1608,11 +1627,10 @@
       s.pts.push({ x: s.pts[0].x + 0.01, y: s.pts[0].y + 0.01, p: s.pts[0].p });
       s._sm = null;
     }
-    if (s.tool === 'pen' || s.tool === 'pencil') {
+    if (s.tool === 'pen') {
       const sm = (s._sm || (s._sm = A.Ink.densify(A.Ink.smoothPressure(s.pts))));
       bg.save();
-      bg.globalAlpha = s.tool === 'pencil' ? 0.86 : 1;
-      bg.fillStyle = s.color;
+      bg.globalAlpha = 1;
       A.Ink.drawPartial(bg, s, Math.max(0, s._committed - 1), sm.length);
       bg.restore();
     } else {
@@ -1716,7 +1734,7 @@
     if (poly.length < 3) { S.mode = null; return; }
     const hits = S.page.strokes.filter(s => s.tool !== 'eraser' && A.Ink.strokeInPoly(s, poly));
     if (!hits.length) { A.toast('没有选中笔迹'); S.mode = null; return; }
-    S.sel = { strokes: hits, bbox: A.Ink.bboxOf(hits, 8), poly: poly };
+    S.sel = { strokes: hits, bbox: A.Ink.bboxOf(hits, 8), poly: poly, angle: 0 };
     drawSelectionBox();
     showCtxFloat();
     S.mode = null;
@@ -1725,6 +1743,8 @@
   function drawSelectionBox() {
     if (!S.sel) { D.selSvg.innerHTML = ''; return; }
     const b = S.sel.bbox;
+    const ang = S.sel.angle || 0;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
     // 手柄要跟着视图缩放反向放大，否则缩小视图后点不中
     const R = A.clamp(9 / Math.max(0.3, S.view.scale), 7, 46);
     const cur = {
@@ -1736,68 +1756,109 @@
       ['w', b.x, b.y + b.h / 2], ['e', b.x + b.w, b.y + b.h / 2],
       ['sw', b.x, b.y + b.h], ['s', b.x + b.w / 2, b.y + b.h], ['se', b.x + b.w, b.y + b.h]
     ];
+    // 选框很窄/很扁时，边中点手柄会盖住中心，手指一拖就变成缩放
+    const thinH = b.h < R * 4.2, thinW = b.w < R * 4.2;
+
     let svg = '<rect x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h +
       '" fill="rgba(224,178,99,.06)" stroke="#e0b263" stroke-width="1.2" stroke-dasharray="6 4" rx="4"/>';
 
     // 旋转手柄挂在顶部中间
-    const rx = b.x + b.w / 2, ry = b.y - R * 3;
-    svg += '<line x1="' + (b.x + b.w / 2) + '" y1="' + b.y + '" x2="' + rx + '" y2="' + ry +
+    const rx = cx, ry = b.y - R * 3;
+    svg += '<line x1="' + cx + '" y1="' + b.y + '" x2="' + rx + '" y2="' + ry +
       '" stroke="#e0b263" stroke-width="1.2" stroke-dasharray="3 3"/>';
     svg += '<circle data-h="rot" cx="' + rx + '" cy="' + ry + '" r="' + R +
       '" fill="rgba(224,178,99,.92)" stroke="rgba(20,20,22,.55)" stroke-width="1.2" style="pointer-events:auto;cursor:' + cur.rot + '"/>';
 
     hs.forEach(([k, x, y]) => {
+      if (thinH && (k === 'n' || k === 's')) return;
+      if (thinW && (k === 'e' || k === 'w')) return;
       svg += '<circle data-h="' + k + '" cx="' + x + '" cy="' + y + '" r="' + R +
         '" fill="#e0b263" stroke="rgba(20,20,22,.55)" stroke-width="1.2" style="pointer-events:auto;cursor:' + cur[k] + '"/>';
     });
-    D.selSvg.innerHTML = svg;
+    // 选区有角度时整框一起转，否则框和墨迹对不上
+    D.selSvg.innerHTML = ang
+      ? '<g transform="rotate(' + (ang * 180 / Math.PI) + ' ' + cx + ' ' + cy + ')">' + svg + '</g>'
+      : svg;
   }
 
   /* ── 选区缩放 / 旋转 ── */
 
+  function rotAbout(p, c, a) {
+    if (!a) return { x: p.x, y: p.y };
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const ox = p.x - c.x, oy = p.y - c.y;
+    return { x: c.x + ox * cos - oy * sin, y: c.y + ox * sin + oy * cos };
+  }
+
+  /* 形状只存两个定义点，直接转点只会得到"轴对齐的矩形"。
+     做变换前先按真实轮廓展开成普通笔迹，旋转才是真旋转。 */
+  function bakeShapeInPlace(s) {
+    if (!s || s.tool !== 'shape') return;
+    const out = A.Ink.shapeOutline(s);
+    if (!out || out.length < 2) return;
+    s.tool = 'pen';
+    s.kind = 'ball';
+    s.shape = null;
+    s.pts = out.map(q => ({ x: q.x, y: q.y, p: .5 }));
+    s._sm = null;
+  }
+
   function beginSelXform(handle, pt) {
-    const b = S.sel.bbox;
+    // 先留全原始信息：撤销时形状要按两个定义点原样还原
+    const orig = S.sel.strokes.map(s => ({
+      tool: s.tool, kind: s.kind, shape: s.shape,
+      pts: s.pts.map(p => ({ x: p.x, y: p.y, p: p.p }))
+    }));
+    S.sel.strokes.forEach(bakeShapeInPlace);
+    const b = A.Ink.bboxOf(S.sel.strokes, 8);
+    S.sel.bbox = b;
+    const a0 = S.sel.angle || 0;
+    const c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
     S.selXform = {
       h: handle,
       b0: { x: b.x, y: b.y, w: b.w, h: b.h },
-      start: pt,
-      snap: S.sel.strokes.map(s => s.pts.map(p => ({ x: p.x, y: p.y })))
+      c: c, a0: a0,
+      rotA0: Math.atan2(pt.y - c.y, pt.x - c.x),
+      start: rotAbout(pt, c, -a0),
+      snap: S.sel.strokes.map(s => s.pts.map(p => ({ x: p.x, y: p.y }))),
+      sizes: S.sel.strokes.map(s => s.size),
+      orig: orig
     };
     S.mode = 'selXform';
   }
 
-  function updateSelXform(pt) {
+  function updateSelXform(ptPage) {
     const xf = S.selXform;
     if (!xf || !S.sel) return;
-    const b0 = xf.b0;
-    const cx = b0.x + b0.w / 2;
-    const cy = b0.y + b0.h / 2;
+    const b0 = xf.b0, c = xf.c, a0 = xf.a0;
 
     if (xf.h === 'rot') {
-      const a0 = Math.atan2(xf.start.y - cy, xf.start.x - cx);
-      let a1 = Math.atan2(pt.y - cy, pt.x - cx);
-      let d = a1 - a0;
-      // 15° 吸附，画正了更容易
-      const snapTo = Math.PI / 12;
-      if (Math.abs(d) > 0.02) d = Math.round(d / snapTo) * snapTo;
+      let ang = a0 + (Math.atan2(ptPage.y - c.y, ptPage.x - c.x) - xf.rotA0);
+      // 只贴着 15° 整倍数时吸附，其余角度允许自由微调
+      const STEP = Math.PI / 12;
+      const near = Math.round(ang / STEP) * STEP;
+      if (Math.abs(ang - near) < 0.055) ang = near;
+      const d = ang - a0;
       const cos = Math.cos(d), sin = Math.sin(d);
       S.sel.strokes.forEach((s, si) => {
         const snap = xf.snap[si];
         s.pts.forEach((p, pi) => {
-          const ox = snap[pi].x - cx, oy = snap[pi].y - cy;
-          p.x = cx + ox * cos - oy * sin;
-          p.y = cy + ox * sin + oy * cos;
+          const ox = snap[pi].x - c.x, oy = snap[pi].y - c.y;
+          p.x = c.x + ox * cos - oy * sin;
+          p.y = c.y + ox * sin + oy * cos;
         });
         s._sm = null;
       });
-      S.sel.bbox = A.Ink.bboxOf(S.sel.strokes, 8);
+      S.sel.angle = ang;
       S.sel.rotated = true;
       drawSelectionBox();
       repaintInk();
       return;
     }
 
-    // 锚点：拖哪边，对面那条边固定
+    // 缩放：先转回选区本地坐标系，缩完再转回去。
+    // 轴对齐缩放在旋转之后一定会把角度压变形，所以必须按本地轴来拉。
+    const pt = rotAbout(ptPage, c, -a0);
     let ax = b0.x, ay = b0.y;
     if (xf.h.indexOf('e') >= 0) ax = b0.x;
     if (xf.h.indexOf('w') >= 0) ax = b0.x + b0.w;
@@ -1820,16 +1881,27 @@
     S.sel.strokes.forEach((s, si) => {
       const snap = xf.snap[si];
       s.pts.forEach((p, pi) => {
-        p.x = ax + (snap[pi].x - ax) * sx;
-        p.y = ay + (snap[pi].y - ay) * sy;
+        const l = rotAbout(snap[pi], c, -a0);
+        const back = rotAbout({ x: ax + (l.x - ax) * sx, y: ay + (l.y - ay) * sy }, c, a0);
+        p.x = back.x; p.y = back.y;
       });
-      s.size = Math.max(0.6, (s._size0 || (s._size0 = s.size)) * Math.abs((sx + sy) / 2));
+      const base = (xf.sizes && xf.sizes[si] != null) ? xf.sizes[si] : s.size;
+      s.size = Math.max(0.6, base * Math.abs((sx + sy) / 2));
       s._sm = null;
     });
 
-    const nx = Math.min(ax, ax + b0.w * sx);
-    const ny = Math.min(ay, ay + b0.h * sy);
-    S.sel.bbox = { x: nx, y: ny, w: Math.abs(b0.w * sx), h: Math.abs(b0.h * sy) };
+    // 锚点在哪边，框就从锚点往反方向长；直接拿 ax+宽 算会让 w/n/nw/sw 四个手柄反向
+    const horiz = xf.h.indexOf('w') >= 0 ? -1 : (xf.h.indexOf('e') >= 0 ? 1 : 0);
+    const vert = xf.h.indexOf('n') >= 0 ? -1 : (xf.h.indexOf('s') >= 0 ? 1 : 0);
+    const x1 = horiz === 0 ? b0.x : (horiz > 0 ? ax : ax - b0.w * sx);
+    const x2 = horiz === 0 ? b0.x + b0.w : (horiz > 0 ? ax + b0.w * sx : ax);
+    const y1 = vert === 0 ? b0.y : (vert > 0 ? ay : ay - b0.h * sy);
+    const y2 = vert === 0 ? b0.y + b0.h : (vert > 0 ? ay + b0.h * sy : ay);
+    S.sel.bbox = {
+      x: Math.min(x1, x2), y: Math.min(y1, y2),
+      w: Math.abs(x2 - x1), h: Math.abs(y2 - y1)
+    };
+    S.sel.angle = a0;
     drawSelectionBox();
     repaintInk();
   }
@@ -1840,8 +1912,7 @@
     S.mode = null;
     if (!xf || !S.sel) return;
     const after = S.sel.strokes.map(s => s.pts.map(p => ({ x: p.x, y: p.y })));
-    // 判断是否真的变了
-    let moved = false;
+    let moved = Math.abs((S.sel.angle || 0) - xf.a0) > 0.008;
     for (let i = 0; i < after.length && !moved; i++) {
       for (let j = 0; j < after[i].length; j++) {
         if (Math.abs(after[i][j].x - xf.snap[i][j].x) > 0.4 ||
@@ -1849,7 +1920,17 @@
       }
     }
     if (moved) {
-      pushUndo({ t: 'xform', strokes: S.sel.strokes.slice(), before: xf.snap, after: after });
+      pushUndo({
+        t: 'xform', strokes: S.sel.strokes.slice(),
+        before: xf.snap, after: after,
+        sizeBefore: xf.sizes || null,
+        sizeAfter: S.sel.strokes.map(s => s.size),
+        angleBefore: xf.a0 || 0,
+        angleAfter: S.sel.angle || 0,
+        boxBefore: { x: xf.b0.x, y: xf.b0.y, w: xf.b0.w, h: xf.b0.h },
+        boxAfter: { x: S.sel.bbox.x, y: S.sel.bbox.y, w: S.sel.bbox.w, h: S.sel.bbox.h },
+        orig: xf.orig || null
+      });
       markDirty();
       showCtxFloat();
     }
@@ -1896,21 +1977,25 @@
         const sel = S.sel;
         if (!sel) return;
         if (a === 'del') {
+          // i 必须在删除前取，-1 会让撤销回来的笔迹全跑到最上层，遮挡关系就变了
+          const items = sel.strokes.map(s => ({ s: s, i: S.page.strokes.indexOf(s) }));
           S.page.strokes = S.page.strokes.filter(s => sel.strokes.indexOf(s) < 0);
-          pushUndo({ t: 'del', items: sel.strokes.map(s => ({ s: s, i: -1 })) });
+          pushUndo({ t: 'del', items: items });
           cancelSelection();
           repaintInk(); markDirty();
         } else if (a === 'copy') {
           const copies = sel.strokes.map(s => {
             const c = JSON.parse(JSON.stringify(slimStroke(s)));
             c.id = A.uid('sk');
-            c.pts.forEach(p => { p.x += 16; p.y += 16; });
             return c;
           });
           copies.forEach(c => S.page.strokes.push(c));
-          pushUndo({ t: 'add', stroke: copies[copies.length - 1] });
-          cancelSelection(); repaintInk(); markDirty();
-          A.toast('已复制');
+          // 复制出来是整组，撤销要一次全部收回（记成 del 会反过来"恢复"，永远撤不掉）
+          pushUndo({ t: 'addmany', strokes: copies });
+          // 原位叠一份会看不见，直接把选区切到副本上，用户可以立刻拖走
+          S.sel = { strokes: copies, bbox: A.Ink.bboxOf(copies, 8), angle: 0 };
+          repaintInk(); drawSelectionBox(); showCtxFloat(); markDirty();
+          A.toast('已复制到原位，可直接拖走');
         } else if (a === 'front') {
           sel.strokes.forEach(s => {
             const i = S.page.strokes.indexOf(s);
@@ -2284,6 +2369,15 @@
       } else {
         list.push(op.stroke);
       }
+    } else if (op.t === 'addmany') {
+      if (reverse) {
+        op.strokes.forEach(s => {
+          const i = list.indexOf(s);
+          if (i >= 0) list.splice(i, 1);
+        });
+      } else {
+        op.strokes.forEach(s => { if (list.indexOf(s) < 0) list.push(s); });
+      }
     } else if (op.t === 'del') {
       if (reverse) {
         // 恢复
@@ -2334,15 +2428,32 @@
       else { op.im.w = op.w1; op.im.h = op.h1; }
     } else if (op.t === 'xform') {
       const data = reverse ? op.before : op.after;
+      const sizes = reverse ? op.sizeBefore : op.sizeAfter;
       op.strokes.forEach((s, si) => {
         const d = data[si];
         if (!d) return;
         s.pts.forEach((p, pi) => {
           if (d[pi]) { p.x = d[pi].x; p.y = d[pi].y; }
         });
+        if (sizes && sizes[si] != null) s.size = sizes[si];
+        // 形状被展开过：撤销要按原始两个定义点还原（矩形轮廓首尾是同一点，取首尾会塌掉）
+        const o = op.orig && op.orig[si];
+        if (o && o.tool === 'shape') {
+          if (reverse) {
+            s.tool = 'shape'; s.kind = o.kind; s.shape = o.shape;
+            s.pts = o.pts.map(p => ({ x: p.x, y: p.y, p: p.p }));
+          } else {
+            s.tool = 'pen'; s.kind = 'ball'; s.shape = null;
+          }
+        }
         s._sm = null;
       });
-      if (S.sel) S.sel.bbox = A.Ink.bboxOf(S.sel.strokes, 8);
+      if (S.sel) {
+        S.sel.angle = reverse ? (op.angleBefore || 0) : (op.angleAfter || 0);
+        const bb = reverse ? op.boxBefore : op.boxAfter;
+        S.sel.bbox = bb ? { x: bb.x, y: bb.y, w: bb.w, h: bb.h } : A.Ink.bboxOf(S.sel.strokes, 8);
+        drawSelectionBox();
+      }
     } else if (op.t === 'lydel') {
       if (reverse) {
         if (S.page.layers.indexOf(op.layer) < 0) {
@@ -2998,8 +3109,19 @@
     });
 
     window.addEventListener('resize', A.debounce(() => {
-      if (document.body.classList.contains('in-studio')) fitWidth();
+      if (!document.body.classList.contains('in-studio')) return;
+      // 横竖屏切换/键盘弹出不该把当前缩放重置回"适应宽度"
+      if (S.page && S.view.scale > 0) { clampView(); scheduleQuality(); }
+      else fitWidth();
     }, 220));
+
+    // 滚轮缩放（桌面/iPad 接鼠标：Ctrl+滚轮或直接滚轮）
+    if (D.stage) D.stage.addEventListener('wheel', (e) => {
+      if (!document.body.classList.contains('in-studio') || S.gesture) return;
+      e.preventDefault();
+      const f = Math.exp(-e.deltaY * (e.ctrlKey ? 0.0045 : 0.0016));
+      zoomAt(e.clientX, e.clientY, A.clamp(f, 0.7, 1.4));
+    }, { passive: false });
   }
 
   function toggleHtml() {

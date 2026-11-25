@@ -109,18 +109,22 @@
     }
   }
 
-  function taperFactor(kind, i, n) {
+  function taperFactor(kind, i, n, headOn, tailOn) {
     if (kind === 'ball' || kind === 'marker') return 1;
-    const head = Math.min(1, (i + 1) / 5);
-    const tail = Math.min(1, (n - i) / 4);
+    // 分片绘制时，只有整笔的第一片要收笔头、最后一片要收笔尾，
+    // 否则每 46 点切一次就会每片都收一次，整条线变成周期性的"香肠"
+    const head = headOn === false ? 1 : Math.min(1, (i + 1) / 5);
+    const tail = tailOn === false ? 1 : Math.min(1, (n - i) / 4);
     const t = Math.min(head, tail);
     return 0.45 + 0.55 * (t < 0 ? 0 : t);
   }
 
   /* ───── 变宽 ribbon 填充 ───── */
-  function fillRibbon(ctx, pts, size, kind, fixedAlpha) {
+  function fillRibbon(ctx, pts, size, kind, fixedAlpha, opt) {
     const n = pts.length;
     if (n === 0) return;
+    const taperHead = !(opt && opt.head === false);
+    const taperTail = !(opt && opt.tail === false);
     const halfBase = size * 0.5;
 
     if (n === 1) {
@@ -136,6 +140,9 @@
     if (kind === 'ball' || kind === 'marker' || kind === 'eraser') {
       ctx.beginPath();
       ctx.lineWidth = Math.max(0.9, size);
+      // 描边路径必须显式给颜色：调用方可能只设了 fillStyle，
+      // 少了这一行圆珠笔会退回 canvas 默认的黑色
+      if (!ctx.strokeStyle || ctx.strokeStyle === '#000000') ctx.strokeStyle = opt && opt.color ? opt.color : ctx.fillStyle;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -152,7 +159,7 @@
     const L = new Array(n), R = new Array(n), W = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const p = pts[i];
-      let w = halfBase * widthFactor(kind, p.p) * taperFactor(kind, i, n);
+      let w = halfBase * widthFactor(kind, p.p) * taperFactor(kind, i, n, taperHead, taperTail);
       w = Math.max(0.42, w);
       W[i] = w;
       let ax, ay;
@@ -251,7 +258,39 @@
   }
 
   /* ───── 单笔绘制（完整） ───── */
+  /* 形状的外形折线：包围盒与命中都按真实轮廓算，不能只算两个定义点 */
+  function shapeOutline(s) {
+    const a = s.pts[0], b = s.pts[s.pts.length - 1];
+    if (!a || !b) return [];
+    const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y);
+    const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
+    const out = [];
+    if (s.shape === 'rect') {
+      out.push({ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 });
+    } else if (s.shape === 'ellipse') {
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      const rx = (x1 - x0) / 2, ry = (y1 - y0) / 2;
+      for (let i = 0; i <= 48; i++) {
+        const t = i / 48 * Math.PI * 2;
+        out.push({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry });
+      }
+    } else {
+      out.push({ x: a.x, y: a.y }, { x: b.x, y: b.y });
+    }
+    return out;
+  }
+
   function drawStroke(ctx, s) {
+    if (s.tool === 'shape') {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = s.color;
+      ctx.strokeStyle = s.color;
+      drawShape(ctx, s);
+      ctx.restore();
+      return;
+    }
     const pts = s._sm || (s._sm = densify(smoothPressure(s.pts), SAMPLE_STEP));
     if (!pts.length) return;
     ctx.save();
@@ -267,9 +306,7 @@
       ctx.strokeStyle = s.color;
     }
 
-    if (s.tool === 'shape') {
-      drawShape(ctx, s);
-    } else {
+    {
       const kind = s.tool === 'eraser' ? 'ball' : (s.kind || 'fountain');
       if (s.tool === 'marker') {
         ctx.fillStyle = s.color;
@@ -293,6 +330,12 @@
     const a = Math.max(0, from), b = Math.min(sm.length, to);
     if (b - a < 1) return;
     const slice = sm.slice(a, b);
+
+    // 颜色和透明度在这里统一兜住，避免调用方漏设导致变黑/变淡
+    const color = s.tool === 'eraser' ? '#000' : s.color;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+
     if (slice.length === 1) {
       const w = Math.max(0.45, s.size * 0.5);
       ctx.beginPath();
@@ -301,7 +344,11 @@
       return;
     }
     const kind = s.tool === 'eraser' ? 'ball' : (s.kind || 'fountain');
-    fillRibbon(ctx, slice, s.size, kind, 1);
+    fillRibbon(ctx, slice, s.size, kind, 1, {
+      head: a === 0,
+      tail: b >= sm.length,
+      color: color
+    });
   }
 
   /* ───── 采样过滤 ───── */
@@ -321,15 +368,16 @@
     pad = pad || 0;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const s of strokes) {
-      const pts = s._sm && s._sm.length ? s._sm : s.pts;
+      const pts = (s.tool === 'shape') ? shapeOutline(s)
+        : (s._sm && s._sm.length ? s._sm : s.pts);
+      if (!pts || !pts.length) continue;
+      const hw = (s.size || 0) * 0.5;
       for (const p of pts) {
-        if (p.x < x0) x0 = p.x;
-        if (p.y < y0) y0 = p.y;
-        if (p.x > x1) x1 = p.x;
-        if (p.y > y1) y1 = p.y;
+        if (p.x - hw < x0) x0 = p.x - hw;
+        if (p.y - hw < y0) y0 = p.y - hw;
+        if (p.x + hw > x1) x1 = p.x + hw;
+        if (p.y + hw > y1) y1 = p.y + hw;
       }
-      const hw = s.size * 0.5 + 1;
-      x0 -= 0; // 已含点坐标，统一在末尾加 pad+宽度
     }
     if (!isFinite(x0)) return { x: 0, y: 0, w: 0, h: 0 };
     return { x: x0 - pad, y: y0 - pad, w: (x1 - x0) + pad * 2, h: (y1 - y0) + pad * 2 };
@@ -356,7 +404,9 @@
 
   /* 笔画是否与点/圆相交（整笔橡皮用） */
   function strokeHit(s, x, y, tol) {
-    const pts = s._sm && s._sm.length ? s._sm : s.pts;
+    const pts = (s.tool === 'shape') ? shapeOutline(s)
+      : (s._sm && s._sm.length ? s._sm : s.pts);
+    if (!pts || !pts.length) return false;
     const r = (s.size * 0.5) + (tol || 0);
     if (pts.length === 1) return Math.hypot(pts[0].x - x, pts[0].y - y) <= r;
     for (let i = 1; i < pts.length; i++) {
@@ -367,17 +417,23 @@
 
   /* 笔画是否落在套索多边形内 */
   function strokeInPoly(s, poly) {
-    const pts = s._sm && s._sm.length ? s._sm : s.pts;
+    const pts = (s.tool === 'shape') ? shapeOutline(s)
+      : (s._sm && s._sm.length ? s._sm : s.pts);
+    if (!pts || !pts.length) return false;
     let inside = 0;
     for (const p of pts) {
       if (pointInPoly(p.x, p.y, poly)) inside++;
     }
-    return pts.length ? (inside / pts.length) > 0.62 : false;
+    // 门槛从 62% 放到 35%：框住大半条线就能选中，
+    // 端点露在框外一点不该直接判失败
+    if (inside / pts.length > 0.35) return true;
+    // 细笔迹点数少时，全在框内也算（否则 2 个点只进 1 个就 50% 失败）
+    return inside > 0 && inside === pts.length;
   }
 
   A.Ink = {
     densify, smoothPressure, drawStroke, drawAll, drawPartial,
-    addPoint, bboxOf, strokeHit, strokeInPoly, pointInPoly, fillRibbon, drawShape,
+    addPoint, bboxOf, strokeHit, strokeInPoly, pointInPoly, fillRibbon, drawShape, shapeOutline,
     SAMPLE_STEP
   };
 })(window.MY);
