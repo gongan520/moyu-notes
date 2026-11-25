@@ -1414,6 +1414,8 @@
   function startStroke(pt, pressure, forceTool) {
     const tool = forceTool || (S.tool === 'marker' ? 'marker' : (S.tool === 'pen' && S.kind === 'pencil' ? 'pencil' : 'pen'));
     const q = S.ruler.on ? snapToRuler(pt) : pt;
+    // 起笔点在尺线附近 → 整笔都锁到尺线上，画长直线不会中途跑偏
+    const rulerLock = S.ruler.on && (Math.abs(q.x - pt.x) > 0.01 || Math.abs(q.y - pt.y) > 0.01);
     // 当前层锁住了就不让画，避免误覆盖
     const cur = layerOf(S.page, S.layer);
     if (cur && cur.locked) {
@@ -1433,7 +1435,8 @@
       size: S.size,
       layer: (cur && cur.id) || 'l0',
       pts: [{ x: q.x, y: q.y, p: pressure || 0.5 }],
-      _committed: 0
+      _committed: 0,
+      _rl: rulerLock
     };
     S.stroke = s;
     S.mode = 'draw';
@@ -1443,23 +1446,24 @@
 
   function appendPoint(s, pt, pressure) {
     const p = (typeof pressure === 'number' && pressure > 0) ? A.clamp(pressure, 0.05, 1) : 0.5;
-    const q = S.ruler.on ? snapToRuler(pt) : pt;
+    const q = (S.ruler.on && s && s._rl) ? snapToRuler(pt, true) : (S.ruler.on ? snapToRuler(pt) : pt);
     A.Ink.addPoint(s, { x: q.x, y: q.y, p: p });
     s._sm = null;
   }
 
   /* ═════════════ 标尺 ═════════════ */
 
-  function snapToRuler(pt) {
+  function snapToRuler(pt, force) {
     const R = S.ruler;
     const cx = pageSize().w / 2, cy = R.y;
     const a = R.angle * Math.PI / 180;
     const dx = Math.cos(a), dy = Math.sin(a);
     const t = (pt.x - cx) * dx + (pt.y - cy) * dy;
     const nx = cx + dx * t, ny = cy + dy * t;
-    // 只有笔尖离尺线足够近才吸附，否则尺子会"吸住"整页
+    // 只有笔尖离尺线足够近才吸附，否则尺子会"吸住"整页；
+    // force = 这一笔是从尺线附近起笔的，中途手抖也要继续按尺线画
     const keep = Math.max(10, S.size * 1.5);
-    if (Math.hypot(pt.x - nx, pt.y - ny) > keep) return pt;
+    if (!force && Math.hypot(pt.x - nx, pt.y - ny) > keep) return pt;
     return { x: nx, y: ny };
   }
 
@@ -2058,6 +2062,9 @@
     { id: 'shr', name: '思源宋体', cls: 'font-shr' },
     { id: 'shr-b', name: '思源宋体 粗', cls: 'font-shr-b' },
     { id: 'shr-l', name: '思源宋体 细', cls: 'font-shr-l' },
+    { id: 'shs', name: '思源黑体', cls: 'font-shs' },
+    { id: 'shs-b', name: '思源黑体 粗', cls: 'font-shs-b' },
+    { id: 'shs-l', name: '思源黑体 细', cls: 'font-shs-l' },
     { id: 'kai', name: '楷体', cls: 'font-kai' },
     { id: 'yuan', name: '圆体', cls: 'font-yuan' },
     { id: 'round', name: '丸体', cls: 'font-round' }
