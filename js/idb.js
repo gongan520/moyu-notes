@@ -193,7 +193,12 @@
       const keys = new Set();
       for (const b of books) {
         const pages = await this.pagesOf(b.id);
-        pages.forEach(p => { if (p.srcKey) keys.add(p.srcKey); });
+        // HTML 源码、PDF 底图、录音都要进备份，少一样恢复出来就是残的
+        pages.forEach(p => {
+          if (p.srcKey) keys.add(p.srcKey);
+          if (p.bgKey) keys.add(p.bgKey);
+          if (p.rec && p.rec.key) keys.add(p.rec.key);
+        });
         out.books.push({ book: b, pages });
       }
       for (const k of keys) {

@@ -1093,8 +1093,9 @@ svg{ display:block; }
 /* ═══════════════ 录音浮条 ═══════════════ */
 .rec-bar{
   position:fixed; left:50%; transform:translateX(-50%);
-  bottom:calc(env(safe-area-inset-bottom) + 8px);
-  z-index:26;
+  /* 必须压在工具坞之上，否则在 iPad 上被 dock 盖住看不见也点不到 */
+  bottom:calc(env(safe-area-inset-bottom) + 148px);
+  z-index:70;
   display:flex; align-items:center; gap:10px;
   height:42px; padding:0 10px 0 12px;
   border-radius:21px;
@@ -1191,10 +1192,26 @@ svg{ display:block; }
   src:url('../vendor/fonts/LXGWWenKai-Medium.ttf') format('truetype');
   font-weight:500; font-style:normal; font-display:swap;
 }
+@font-face{
+  font-family:'MoYu WenKai GB';
+  src:url('../vendor/fonts/LXGWWenKaiGB-Regular.ttf') format('truetype');
+  font-weight:400; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu WenKai GB';
+  src:url('../vendor/fonts/LXGWWenKaiGB-Medium.ttf') format('truetype');
+  font-weight:500; font-style:normal; font-display:swap;
+}
+@font-face{
+  font-family:'MoYu WenKai GB';
+  src:url('../vendor/fonts/LXGWWenKaiGB-Light.ttf') format('truetype');
+  font-weight:300; font-style:normal; font-display:swap;
+}
 
 /* 文字框字体：默认跟随系统，选内置手写体时才加对应 class */
 .pg-text{ font-family:-apple-system,"PingFang SC",sans-serif; }
 .pg-text.font-wenkai{ font-family:'MoYu WenKai','PingFang SC',serif; }
+.pg-text.font-wenkaigb{ font-family:'MoYu WenKai GB','PingFang SC',serif; }
 .pg-text.font-song{ font-family:'Songti SC','SimSun',serif; }
 .pg-text.font-kai{ font-family:'Kaiti SC','STKaiti',serif; }
 .pg-text.font-yuan{ font-family:'Yuanti SC','PingFang SC',sans-serif; }

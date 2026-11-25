@@ -356,6 +356,23 @@
     });
     svg.addEventListener('pointerup', () => { down = null; });
     svg.addEventListener('pointercancel', () => { down = null; });
+    // 双指缩放：iPad 上没有 Ctrl+滚轮，靠两指触控
+    let pinch = null;
+    mapBox.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 2) return;
+      const [a, b] = e.touches;
+      pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), k: mindView.k };
+    }, { passive: true });
+    mapBox.addEventListener('touchmove', (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      const [a, b] = e.touches;
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      if (pinch.d < 10) return;
+      mindView.k = A.clamp(pinch.k * (d / pinch.d), 0.35, 2.4);
+      svg.style.transform = 'translate(' + mindView.x + 'px,' + mindView.y + 'px) scale(' + mindView.k + ')';
+    }, { passive: true });
+    mapBox.addEventListener('touchend', () => { pinch = null; }, { passive: true });
+
     svg.addEventListener('wheel', (e) => {
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();

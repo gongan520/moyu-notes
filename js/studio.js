@@ -216,9 +216,15 @@
   async function loadPage(idx, first) {
     if (!S.pages.length) return;
     idx = A.clamp(idx, 0, S.pages.length - 1);
+    // 录音中翻页：录音属于原来那一页，先落盘再走
+    if (!first && A.Record && A.Record.isRecording() && S.page) {
+      await stopRecording();
+      A.toast('已切换页面，录音保存到了上一页');
+    }
     if (!first && S.page) {
       await persistPage(true);
     }
+    if (!first) stopRecPlay();
     S.idx = idx;
     const p = S.pages[idx];
     S.page = p;
@@ -466,7 +472,7 @@
         name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); name.blur(); } });
         row.appendChild(name);
 
-        const num = A.el('span', 'ly-count');
+          const num = A.el('span', 'ly-count');
         num.textContent = (counts[l.id] || 0) + ' 笔';
         row.appendChild(num);
 
@@ -511,6 +517,9 @@
 
         list.appendChild(row);
       });
+
+      const subEl = document.querySelector('#sheet .sheet-title .sub');
+      if (subEl) subEl.textContent = '第 ' + (p.order + 1) + ' 页 · 共 ' + layers.length + ' 层';
     }
 
     const node = A.el('div', 'ly-wrap');
@@ -574,24 +583,36 @@
     if (D.recFill) D.recFill.style.width = pct + '%';
   }
 
+  async function stopRecording() {
+    const p = S.page;
+    const b = S.book;
+    if (!p || !b) return null;
+    const info = await A.Record.stop(b.id, p.id);
+    const bar = recBar();
+    if (bar) bar.classList.remove('is-rec');
+    if (D.recPlay) D.recPlay.disabled = false;
+    if (info) {
+      p.rec = { key: info.key, dur: info.dur, at: A.now() };
+      paintRecUI(info.dur, info.dur);
+      markDirty();
+      await persistPage(true);
+      A.toast('录音已保存，' + A.Record.fmt(info.dur) + '（回放时笔迹会跟着重现）', 3600);
+    }
+    return info;
+  }
+
+  /* ■ 按钮：录音中就停录音，否则停回放 */
+  function stopRecOrPlay() {
+    if (A.Record && A.Record.isRecording()) { stopRecording(); return; }
+    stopRecPlay();
+    A.toast('已停止回放');
+  }
+
   async function toggleRec() {
     if (!A.Record) { A.toast('录音模块未加载'); return; }
 
     if (A.Record.isRecording()) {
-      const p = S.page;
-      const b = S.book;
-      if (!p || !b) return;
-      const info = await A.Record.stop(b.id, p.id);
-      const bar = recBar();
-      if (bar) bar.classList.remove('is-rec');
-      if (D.recPlay) D.recPlay.disabled = false;
-      if (info) {
-        p.rec = { key: info.key, dur: info.dur, at: A.now() };
-        paintRecUI(info.dur, info.dur);
-        markDirty();
-        persistPage(true);
-        A.toast('录音已保存，' + A.Record.fmt(info.dur) + '（回放时笔迹会跟着重现）', 3600);
-      }
+      await stopRecording();
       return;
     }
 
@@ -621,17 +642,16 @@
     S._lastVisible = -1;
     repaintInk();
 
-    let raf = 0;
     const tickRedraw = () => {
-      if (S.playT == null) return;
+      if (S.playT == null) { S._playRaf = 0; return; }
       const n = visibleStrokes().length;
       if (n !== S._lastVisible) {
         S._lastVisible = n;
         repaintInk();
       }
-      raf = requestAnimationFrame(tickRedraw);
+      S._playRaf = requestAnimationFrame(tickRedraw);
     };
-    raf = requestAnimationFrame(tickRedraw);
+    S._playRaf = requestAnimationFrame(tickRedraw);
 
     await A.Record.play(p.rec.key, 0,
       (t, total) => {
@@ -639,7 +659,7 @@
         paintRecUI(t, total > 0 && isFinite(total) ? total : dur);
       },
       () => {
-        cancelAnimationFrame(raf);
+        if (S._playRaf) { cancelAnimationFrame(S._playRaf); S._playRaf = 0; }
         S.playT = null;
         S._lastVisible = -1;
         repaintInk();
@@ -652,6 +672,7 @@
 
   function stopRecPlay() {
     A.Record.pause();
+    if (S._playRaf) { cancelAnimationFrame(S._playRaf); S._playRaf = 0; }
     S.playT = null;
     S._lastVisible = -1;
     repaintInk();
@@ -1394,6 +1415,11 @@
       A.toast('「' + cur.name + '」已锁定，换个图层再写');
       return;
     }
+    if (cur && cur.visible === false) {
+      // 藏在看不见的层上写字会让人以为笔坏了
+      cur.visible = true;
+      A.toast('「' + cur.name + '」原本是隐藏的，已自动显示');
+    }
     const s = {
       id: A.uid('sk'),
       tool: tool,
@@ -1923,6 +1949,7 @@
   const TEXT_FONTS = [
     { id: 'system', name: '系统黑体', cls: '' },
     { id: 'wenkai', name: '手写楷体', cls: 'font-wenkai' },
+    { id: 'wenkaigb', name: '国标楷体', cls: 'font-wenkaigb' },
     { id: 'song', name: '宋体', cls: 'font-song' },
     { id: 'kai', name: '楷体', cls: 'font-kai' },
     { id: 'yuan', name: '圆体', cls: 'font-yuan' },
@@ -1972,20 +1999,46 @@
         markDirty();
       });
       el.addEventListener('input', () => { t.text = el.textContent; });
-      let pressT = 0, moved = false;
+      // 按住拖动位置；长按不动 560ms 弹样式面板
+      let pressT = 0, moved = false, drag = null;
       el.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
         moved = false;
+        drag = { x: e.clientX, y: e.clientY, ox: t.x, oy: t.y, active: false };
         clearTimeout(pressT);
         pressT = setTimeout(() => {
           if (moved) return;
+          drag = null;
           el.blur();
           openTextOptions(t);
         }, 560);
+        try { el.setPointerCapture(e.pointerId); } catch (err) { }
       });
-      el.addEventListener('pointermove', () => { moved = true; clearTimeout(pressT); });
-      el.addEventListener('pointerup', () => clearTimeout(pressT));
-      el.addEventListener('pointercancel', () => clearTimeout(pressT));
+      el.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const dx = e.clientX - drag.x;
+        const dy = e.clientY - drag.y;
+        if (!drag.active && Math.abs(dx) + Math.abs(dy) > 5) {
+          drag.active = true;
+          moved = true;
+          clearTimeout(pressT);
+          el.blur();
+        }
+        if (!drag.active) return;
+        e.preventDefault();
+        // 屏幕位移换算成页面坐标
+        t.x = Math.max(0, drag.ox + dx / S.view.scale);
+        t.y = Math.max(0, drag.oy + dy / S.view.scale);
+        el.style.left = t.x + 'px';
+        el.style.top = t.y + 'px';
+      });
+      const endDrag = () => {
+        clearTimeout(pressT);
+        if (drag && drag.active) markDirty();
+        drag = null;
+      };
+      el.addEventListener('pointerup', endDrag);
+      el.addEventListener('pointercancel', endDrag);
       D.textLayer.appendChild(el);
     });
   }
@@ -2369,6 +2422,7 @@
       images: (p.images || []).map(im => ({ id: im.id, src: im.src, x: im.x, y: im.y, w: im.w, h: im.h }))
     };
     await A.db.savePage(copy);
+    if (A.Search) A.Search.invalidate();
     if (S.book) {
       S.book.updatedAt = A.now();
       S.book.pageCount = S.pages.length;
@@ -2398,11 +2452,17 @@
         type: S.page.type, w: S.page.w, h: S.page.h, preset: S.page.preset,
         paper: S.page.paper, paperColor: S.page.paperColor,
         srcKey: S.page.srcKey, sliceTop: S.page.sliceTop, docH: S.page.docH,
+        heading: S.page.heading, headingLevel: S.page.headingLevel,
+        layers: JSON.parse(JSON.stringify(S.page.layers || defaultLayers())),
         strokes: (S.page.strokes || []).map(slimStroke),
-        texts: S.page.texts || [], images: S.page.images || []
+        texts: JSON.parse(JSON.stringify(S.page.texts || [])),
+        images: JSON.parse(JSON.stringify(S.page.images || []))
       }));
     } else {
       page = blankPage(S.page.bookId, order, { w: S.page.w, h: S.page.h, id: S.page.preset });
+      // 新页沿用当前页的纸张与纸色，否则连写几页要反复设模板
+      page.paper = S.page.paper || 'lined';
+      page.paperColor = S.page.paperColor || '#ffffff';
     }
     await A.db.savePage(page);
     S.pages.push(page);
@@ -2413,8 +2473,18 @@
   async function deletePage(idx) {
     if (S.pages.length <= 1) { A.toast('至少保留一页'); return; }
     const p = S.pages[idx];
+    // 关键：先把当前页指针摘掉，否则后面 loadPage 的 persistPage
+    // 会把刚删掉的那一页又写回库里，刷新后"复活"
+    const wasCurrent = S.page === p;
+    if (wasCurrent) {
+      S.page = null;
+      S.sel = null;
+      if (S.stroke) { S.stroke = null; S.mode = null; }
+    }
     S.pages.splice(idx, 1);
     await A.db.deletePage(p.id);
+    if (p.bgKey) { try { await A.db.deleteAsset(p.bgKey); } catch (e) { } }
+    if (p.rec && p.rec.key) { try { await A.db.deleteAsset(p.rec.key); } catch (e) { } }
     for (let i = 0; i < S.pages.length; i++) {
       S.pages[i].order = i;
       await A.db.savePage(S.pages[i]);
@@ -2487,12 +2557,9 @@
       }
       g.fillStyle = 'rgba(224,178,99,.9)';
       g.fillRect(0, 0, p.w, 8);
-    } else if (p.paper !== 'blank') {
-      g.strokeStyle = 'rgba(70,90,130,.16)';
-      g.lineWidth = 1;
-      for (let y = 84; y < p.h; y += 28) {
-        g.beginPath(); g.moveTo(0, y); g.lineTo(p.w, y); g.stroke();
-      }
+    } else {
+      // 走和正式渲染同一套纸张绘制，缩略图才不会所有模板长一样
+      try { drawPaperPattern(g, p); } catch (e) { }
     }
     g.save();
     g.scale(1, 1);
@@ -2623,10 +2690,14 @@
 
   /* ═════════════ 导出 ═════════════ */
 
-  async function renderPageToCanvas(p) {
+  async function renderPageToCanvas(p, scale) {
+    scale = scale || 1;
     const cv = document.createElement('canvas');
-    cv.width = p.w; cv.height = p.h;
+    cv.width = Math.round(p.w * scale);
+    cv.height = Math.round(p.h * scale);
     const g = cv.getContext('2d');
+    // 之后所有绘制都用页面坐标，由这层变换负责放大
+    g.setTransform(scale, 0, 0, scale, 0, 0);
     g.fillStyle = p.paperColor || '#ffffff';
     g.fillRect(0, 0, p.w, p.h);
     drawPaperPattern(g, p);
@@ -2637,16 +2708,21 @@
         const data = await A.db.getAsset(p.bgKey);
         if (data) {
           const bg = await A.loadImage(data);
+          // 用底图自身的高分辨率铺满整页，别按页面点尺寸缩水
           g.drawImage(bg, 0, 0, p.w, p.h);
         }
       } catch (e) { }
     }
 
     // 笔迹先画在透明层上，这样橡皮只擦墨不擦纸
+    const hidden = new Set((p.layers || []).filter(l => l.visible === false).map(l => l.id));
+    const inkStrokes = (p.strokes || []).filter(s => !s.layer || !hidden.has(s.layer));
     const ink = document.createElement('canvas');
-    ink.width = p.w; ink.height = p.h;
-    A.Ink.drawAll(ink.getContext('2d'), p.strokes || []);
-    g.drawImage(ink, 0, 0);
+    ink.width = cv.width; ink.height = cv.height;
+    const ig = ink.getContext('2d');
+    ig.setTransform(scale, 0, 0, scale, 0, 0);
+    A.Ink.drawAll(ig, inkStrokes);
+    g.drawImage(ink, 0, 0, p.w, p.h);
 
     // 图片
     for (const im of (p.images || [])) {
@@ -2662,6 +2738,7 @@
       const fam = {
         system: '-apple-system,"PingFang SC",sans-serif',
         wenkai: '"MoYu WenKai","PingFang SC",serif',
+        wenkaigb: '"MoYu WenKai GB","PingFang SC",serif',
         song: '"Songti SC","SimSun",serif',
         kai: '"Kaiti SC","STKaiti",serif',
         yuan: '"Yuanti SC","PingFang SC",sans-serif',
@@ -2728,12 +2805,15 @@
       const data = [];
       for (let i = 0; i < S.pages.length; i++) {
         const p = S.pages[i];
-        const cv = await renderPageToCanvas(p);
+        const cv = await renderPageToCanvas(p, 2);
         const url = cv.toDataURL('image/jpeg', 0.9);
+        // PDF 页的 w/h 本来就是 pt，不能再乘 0.75，否则整页缩成 3/4
+        const isPt = p.type === 'pdf';
+        const k = isPt ? 1 : 0.75;
         data.push({
           b64: url.split(',')[1],
           w: cv.width, h: cv.height,
-          ptW: cv.width * 0.75, ptH: cv.height * 0.75
+          ptW: p.w * k, ptH: p.h * k
         });
         cv.width = 1; cv.height = 1;
       }
@@ -2752,7 +2832,7 @@
   async function exportPng() {
     A.busy('正在导出图片…');
     try {
-      const cv = await renderPageToCanvas(S.page);
+      const cv = await renderPageToCanvas(S.page, 2);
       cv.toBlob((blob) => {
         const name = (S.book.name || '笔记').replace(/[\\/:*?"<>|]/g, '_');
         A.download(blob, name + '-P' + (S.idx + 1) + '.png');
@@ -2812,7 +2892,7 @@
     on('#btnOutline', 'click', () => { if (A.Outline) A.Outline.open('outline'); });
     on('#btnRec', 'click', toggleRec);
     on('#recPlay', 'click', playRec);
-    on('#recStop', 'click', stopRecPlay);
+    on('#recStop', 'click', stopRecOrPlay);
     on('#recClose', 'click', () => {
       if (A.Record && A.Record.isRecording()) { A.toast('先停止录音'); return; }
       showRecBar(false);
@@ -3059,6 +3139,7 @@
     exportPdf, exportPng, fitWidth, fitPage, S, createHtmlBook, measureHtml,
     openPagesPanel, openPaperPanel, openExportPanel, insertImage, saveNow,
     openLayersPanel, toggleRec, playRec, stopRecPlay, repaintInk,
-    ensureLayers, layerOf, drawSelectionBox, visibleStrokes, renderPageToCanvas
+    ensureLayers, layerOf, drawSelectionBox, visibleStrokes, renderPageToCanvas,
+    deletePage
   };
 })(window.MY);

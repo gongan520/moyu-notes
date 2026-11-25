@@ -138,7 +138,12 @@
   }
 
   function pause() {
-    if (R.audio) { try { R.audio.pause(); } catch (e) { } }
+    if (R.audio) {
+      try { R.audio.pause(); } catch (e) { }
+      // 必须解绑，否则停掉以后 ontimeupdate 还在把旧的 playT 往回写
+      R.audio.ontimeupdate = null;
+      R.audio.onended = null;
+    }
     R.playing = false;
   }
 

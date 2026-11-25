@@ -150,8 +150,18 @@
       .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
   }
 
+  /* 统计文件夹里的笔记：含所有子文件夹，否则上层文件夹永远显示 0 */
   function countIn(id) {
-    return S.books.filter(b => (b.folderId || 'root') === id).length;
+    const ids = new Set([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const f of S.folders) {
+        const p = f.parentId || 'root';
+        if (ids.has(p) && !ids.has(f.id)) { ids.add(f.id); grew = true; }
+      }
+    }
+    return S.books.filter(b => ids.has(b.folderId || 'root')).length;
   }
 
   function sorted() {
@@ -246,7 +256,25 @@
         '</div><div class="folder-count">' + countIn(f.id) + ' 本</div></div>' +
         '<div class="book-meta"><div class="book-name">' + esc(f.name) + '</div>' +
         '<div class="book-time">文件夹</div></div>';
-      card.addEventListener('click', () => { S.folderId = f.id; render(); });
+      // iPad 上没有右键：长按 560ms 弹菜单，短按进入
+      let pT = 0, pMoved = false, pFired = false;
+      card.addEventListener('pointerdown', (e) => {
+        pMoved = false; pFired = false;
+        clearTimeout(pT);
+        pT = setTimeout(() => {
+          if (pMoved) return;
+          pFired = true;
+          if (A.haptic) A.haptic(10);
+          folderMenu(f);
+        }, 560);
+      });
+      card.addEventListener('pointermove', () => { pMoved = true; clearTimeout(pT); });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+        card.addEventListener(ev, () => clearTimeout(pT)));
+      card.addEventListener('click', (e) => {
+        if (pFired) { e.preventDefault(); e.stopPropagation(); pFired = false; return; }
+        S.folderId = f.id; render();
+      });
       card.addEventListener('contextmenu', (e) => { e.preventDefault(); folderMenu(f); });
       frag.appendChild(card);
     });
@@ -464,6 +492,26 @@
     A.toast('已创建文件夹');
   }
 
+  function confirmAction(title, sub, okText) {
+    return new Promise((res) => {
+      const node = A.el('div');
+      node.innerHTML = '<div class="list">' +
+        '<button class="list-item is-danger" data-a="y"><span class="li-grow">' + okText + '</span></button>' +
+        '<button class="list-item" data-a="n"><span class="li-grow">取消</span></button>' +
+        '</div>';
+      A.sheet.open({
+        title: title, sub: sub, node: node,
+        onMount: (body, sh) => {
+          A.$$('.list-item', body).forEach(b => b.addEventListener('click', () => {
+            sh.close();
+            res(b.dataset.a === 'y');
+          }));
+        },
+        onClose: () => res(false)
+      });
+    });
+  }
+
   function folderMenu(f) {
     const node = A.el('div');
     node.innerHTML = '<div class="list">' +
@@ -484,6 +532,13 @@
             await A.db.saveFolder(f);
             await refresh();
           } else if (act === 'del') {
+            const nBooks = S.books.filter(x => (x.folderId || 'root') === f.id).length;
+            const okDel = await confirmAction(
+              '删除「' + f.name + '」？',
+              nBooks ? '文件夹里的 ' + nBooks + ' 本笔记不会删，会退回上一级' : '这个文件夹是空的',
+              nBooks ? '删除文件夹，笔记保留' : '删除文件夹'
+            );
+            if (!okDel) return;
             for (const bk of S.books.filter(x => (x.folderId || 'root') === f.id)) {
               bk.folderId = f.parentId || 'root';
               await A.db.saveBook(bk);
@@ -642,6 +697,29 @@
       const text = await A.readText(file);
       const data = JSON.parse(text);
       if (!data || data.format !== 'moyu-backup') throw new Error('格式不正确');
+      // ① 文件夹（跳过已存在的同名 id）
+      const folders = Array.isArray(data.folders) ? data.folders : [];
+      for (const f of folders) {
+        if (!f || !f.id) continue;
+        const ex = await A.db.getFolder(f.id);
+        if (!ex) await A.db.saveFolder(f);
+      }
+
+      // ② 原始资源（HTML 源码 / PDF 底图 / 录音）先入池
+      const pool = data.assets || {};
+      const remap = new Map();
+      async function copyAsset(oldKey) {
+        if (!oldKey) return null;
+        if (remap.has(oldKey)) return remap.get(oldKey);
+        let payload = pool[oldKey];
+        if (payload === undefined) payload = await A.db.getAsset(oldKey);
+        if (payload == null) { remap.set(oldKey, null); return null; }
+        const nk = A.uid('as');
+        await A.db.putAsset(nk, payload);
+        remap.set(oldKey, nk);
+        return nk;
+      }
+
       let n = 0;
       for (const item of data.books) {
         const book = item.book;
@@ -649,12 +727,23 @@
         const exist = await A.db.getBook(book.id);
         if (exist) { book.id = A.uid('bk'); book.name = book.name + ' (恢复)'; }
         await A.db.saveBook(book);
-        const pages = (item.pages || []).map(p => Object.assign({}, p, { bookId: book.id, id: exist ? A.uid('pg') : p.id }));
+
+        const pages = [];
+        for (const raw of (item.pages || [])) {
+          const p2 = Object.assign({}, raw);
+          p2.bookId = book.id;
+          if (exist) p2.id = A.uid('pg');
+          if (p2.srcKey) p2.srcKey = await copyAsset(p2.srcKey) || p2.srcKey;
+          if (p2.bgKey) p2.bgKey = await copyAsset(p2.bgKey) || p2.bgKey;
+          if (p2.rec && p2.rec.key) p2.rec = Object.assign({}, p2.rec, { key: await copyAsset(p2.rec.key) || p2.rec.key });
+          pages.push(p2);
+        }
         await A.db.savePages(pages);
         n++;
       }
       await refresh();
-      A.toast('已恢复 ' + n + ' 本笔记');
+      if (A.Search) A.Search.invalidate();
+      A.toast('已恢复 ' + n + ' 本笔记' + (folders.length ? '、' + folders.length + ' 个文件夹' : ''));
     } catch (e) {
       A.toast('恢复失败：' + (e.message || ''));
     } finally { A.busy(false); }

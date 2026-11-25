@@ -132,13 +132,12 @@
     const list = h.querySelector('#srList');
     list.innerHTML = '';
 
-    if (!built) {
-      hint.textContent = '正在建立索引…';
-      await build();
-      hint.textContent = '已索引 ' + index.length + ' 条内容，输入关键词开始搜索';
-    } else {
-      hint.textContent = '已索引 ' + index.length + ' 条内容';
-    }
+    // 每次打开都重建：索引很小（只存文本），但内容变化很频繁，
+    // 靠 invalidate 打标记太容易漏（导入、恢复、外部写入都会绕过去）
+    hint.textContent = '正在建立索引…';
+    built = false;
+    await build();
+    hint.textContent = '已索引 ' + index.length + ' 条内容，输入关键词开始搜索';
     const inp = h.querySelector('#srInput');
     inp.value = prefill || '';
     setTimeout(() => inp.focus(), 120);
