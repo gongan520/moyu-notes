@@ -680,6 +680,22 @@
     bind('#btnEmptyNew', () => newBook());
     bind('#btnImportHtml', () => A.$('#fileHtml').click());
     bind('#btnEmptyImport', () => A.$('#fileHtml').click());
+    bind('#btnImportPdf', () => {
+      if (A.PdfImport) A.PdfImport.pick();
+      else A.toast('PDF 模块未加载');
+    });
+
+    // 书架搜索框：回车直接进整库全文搜索（书名没命中时也能搜到内容）
+    const sb = A.$('#libSearch');
+    if (sb) {
+      sb.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          sb.blur();
+          if (A.Search) A.Search.open(sb.value.trim());
+        }
+      });
+    }
 
     const fi = A.$('#fileHtml');
     if (fi) fi.addEventListener('change', async () => {

@@ -23,6 +23,21 @@ img{-webkit-user-drag:none;}
 <script id="__moyu_bridge">
 (function(){
   var last=-1, timer=0, sent=0;
+  // 收集文档里的标题层级，供大纲使用（相对 body 顶部，不受分页偏移影响）
+  function heads(){
+    var out=[];
+    var hs;
+    try{ hs=document.querySelectorAll('h1,h2,h3,h4'); }catch(e){ return out; }
+    var bt=document.body? document.body.getBoundingClientRect().top : 0;
+    for(var i=0;i<hs.length && out.length<240;i++){
+      var el=hs[i];
+      var txt=(el.textContent||'').replace(/\\s+/g,' ').trim();
+      if(!txt) continue;
+      var r=el.getBoundingClientRect();
+      out.push([Math.round(r.top-bt), parseInt(el.tagName.charAt(1),10)||1, txt.slice(0,70)]);
+    }
+    return out;
+  }
   function measure(){
     var d=document.documentElement, b=document.body;
     if(!d||!b) return;
@@ -37,7 +52,7 @@ img{-webkit-user-drag:none;}
     h=Math.ceil(h||0);
     if(h>0 && Math.abs(h-last)>1){
       last=h;
-      try{ parent.postMessage({__moyu_h:h},'*'); }catch(e){}
+      try{ parent.postMessage({__moyu_h:h, __moyu_heads:heads()},'*'); }catch(e){}
     }
   }
   function schedule(){
@@ -157,6 +172,7 @@ img{-webkit-user-drag:none;}
     if (!d || typeof d !== 'object') return;
     if (typeof d.__moyu_h === 'number') {
       if (entry.onHeight) entry.onHeight(d.__moyu_h);
+      if (Array.isArray(d.__moyu_heads) && entry.onHeads) entry.onHeads(d.__moyu_heads);
     } else if (d.__moyu_link) {
       if (entry.onLink) entry.onLink(d.__moyu_link);
     } else if (d.__moyu_hash) {

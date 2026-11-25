@@ -23,9 +23,12 @@
     document.addEventListener('dragstart', e => e.preventDefault());
     document.addEventListener('gesturestart', e => e.preventDefault());
 
-    // 点遮罩关闭底部面板
+    // 点遮罩关闭底部面板（导入 PDF 等长任务期间锁定，避免误触中断）
     const scrim = A.$('#sheetScrim');
-    if (scrim) scrim.addEventListener('click', () => A.sheet.close());
+    if (scrim) scrim.addEventListener('click', () => {
+      if (A.sheet.isLocked && A.sheet.isLocked()) return;
+      A.sheet.close();
+    });
 
     // 防止双击放大与文本选择放大镜
     let lastEnd = 0;

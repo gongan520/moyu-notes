@@ -35,6 +35,10 @@
           <svg viewBox="0 0 24 24" class="ico"><path d="M12 5v14M5 12h14"/></svg>
           <span>新建笔记</span>
         </button>
+        <button class="btn btn--ghost" id="btnImportPdf">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="M9 13h1.5a1.5 1.5 0 010 3H9v-3zm0 3v2"/></svg>
+          <span>PDF</span>
+        </button>
         <button class="btn btn--solid" id="btnImportHtml">
           <svg viewBox="0 0 24 24" class="ico"><path d="M12 16V4m0 12l-4-4m4 4l4-4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
           <span>导入 HTML</span>
@@ -52,7 +56,7 @@
       </div>
       <div class="search-box">
         <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
-        <input type="search" id="libSearch" placeholder="搜索笔记" autocomplete="off" />
+        <input type="search" id="libSearch" placeholder="搜索笔记（回车搜全文）" autocomplete="off" />
       </div>
     </div>
 
@@ -110,6 +114,12 @@
         <button class="icon-btn" id="btnRead" title="阅读模式（链接可点、全文连续）">
           <svg viewBox="0 0 24 24" class="ico"><path d="M4 5.5h6a2.5 2.5 0 012.5 2.5v11A2 2 0 0010.5 17H4z"/><path d="M20 5.5h-6A2.5 2.5 0 0011.5 8v11A2 2 0 0113.5 17H20z"/></svg>
         </button>
+        <button class="icon-btn" id="btnOutline" title="大纲 / 脑图">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4 6h3M4 12h3M4 18h3"/><path d="M10 6h10M10 12h7M10 18h9"/></svg>
+        </button>
+        <button class="icon-btn" id="btnRec" title="录音（笔记跟着声音走）">
+          <svg viewBox="0 0 24 24" class="ico"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0"/><path d="M12 17.5V21"/></svg>
+        </button>
         <button class="icon-btn" id="btnExport" title="导出">
           <svg viewBox="0 0 24 24" class="ico"><path d="M12 4v10m0 0l-3.5-3.5M12 14l3.5-3.5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
         </button>
@@ -144,6 +154,16 @@
       <button class="page-nav page-nav--r" id="btnNextPage" aria-label="下一页">
         <svg viewBox="0 0 24 24" class="ico"><path d="M9.5 6l6 6-6 6"/></svg>
       </button>
+    </div>
+
+    <!-- 录音浮条：录的时候笔迹会记时间戳，回放时按进度重现 -->
+    <div class="rec-bar" id="recBar" hidden>
+      <span class="rec-dot" id="recDot"></span>
+      <span class="rec-time" id="recTime">0:00</span>
+      <div class="rec-track" id="recTrack"><i id="recFill"></i></div>
+      <button class="rec-mini" id="recPlay" title="回放">▶</button>
+      <button class="rec-mini" id="recStop" title="停止">■</button>
+      <button class="rec-close" id="recClose" title="收起">×</button>
     </div>
 
     <!-- 底部工具坞 -->
@@ -259,6 +279,11 @@
 <script src="./js/ink.js"></script>
 <script src="./js/htmlpage.js"></script>
 <script src="./js/pdf.js"></script>
+<script src="./js/pdfimport.js"></script>
+<script src="./js/record.js"></script>
+<script src="./js/outline.js"></script>
+<script src="./js/search.js"></script>
+<script src="./js/flashcard.js"></script>
 <script src="./js/library.js"></script>
 <script src="./js/studio.js"></script>
 <script src="./js/boot.js"></script>

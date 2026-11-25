@@ -57,6 +57,10 @@
     htmlVisible: true,
     ruler: { on: false, y: 260, angle: 0 },
     picking: false,
+    playT: null,          // 录音回放进度；null 表示正常显示全部笔迹
+    selScale: null,       // 选区缩放状态
+    layer: 0,             // 当前作图图层
+    textFont: 'system',   // 新文字框默认字体
     ready: false
   };
 
@@ -87,9 +91,32 @@
     D.ctxFloat = A.$('#ctxFloat');
     D.hint = A.$('#stageHint');
     D.toolRow = A.$('#toolRow');
+    D.recBar = A.$('#recBar');
+    D.recTime = A.$('#recTime');
+    D.recFill = A.$('#recFill');
+    D.recDot = A.$('#recDot');
+    D.recPlay = A.$('#recPlay');
+    D.recTrack = A.$('#recTrack');
   }
 
   /* ═════════════ 页面构造 ═════════════ */
+
+  /* 图层：每页一张列表，笔画用 layer 记住归属 */
+  function defaultLayers() {
+    return [{ id: 'l0', name: '图层 1', visible: true, locked: false }];
+  }
+
+  function ensureLayers(p) {
+    if (!p) return [];
+    if (!Array.isArray(p.layers) || !p.layers.length) p.layers = defaultLayers();
+    p.layers.forEach(l => { if (l.visible == null) l.visible = true; });
+    return p.layers;
+  }
+
+  function layerOf(p, id) {
+    const ls = ensureLayers(p);
+    return ls.find(l => l.id === id) || ls[0];
+  }
 
   function blankPage(bookId, order, preset) {
     const p = preset || PAGE_PRESETS[0];
@@ -102,6 +129,7 @@
       preset: p.id,
       paper: 'lined',
       paperColor: '#ffffff',
+      layers: defaultLayers(),
       strokes: [],
       texts: [],
       images: []
@@ -121,6 +149,7 @@
       docH: totalH || 0,
       paper: 'blank',
       paperColor: '#ffffff',
+      layers: defaultLayers(),
       strokes: [],
       texts: [],
       images: []
@@ -206,6 +235,7 @@
 
     await renderPage();
     fitWidth(true);
+    syncRecBar();
   }
 
   function updatePageIndicator() {
@@ -391,6 +421,259 @@
 
   let readerOpen = false, readerScale = 1, readerStartY = 0, readerScrolled = false;
 
+  /* ═════════════ 图层面板 ═════════════ */
+
+  function openLayersPanel() {
+    const p = S.page;
+    if (!p) return;
+    const layers = ensureLayers(p);
+
+    function build(node) {
+      const counts = {};
+      (p.strokes || []).forEach(s => {
+        const k = s.layer || 'l0';
+        counts[k] = (counts[k] || 0) + 1;
+      });
+
+      node.innerHTML = '<div class="ly-list"></div>';
+      const list = node.querySelector('.ly-list');
+
+      // 顶层显示在最上面
+      layers.slice().reverse().forEach(l => {
+        const row = A.el('div', 'ly-row' + (l.id === S.layer ? ' is-cur' : ''));
+        const eye = A.el('button', 'ly-eye' + (l.visible === false ? ' is-off' : ''));
+        eye.innerHTML = l.visible === false
+          ? '<svg viewBox="0 0 24 24" class="ico"><path d="M4 4l16 16"/><path d="M9.5 5.4A10 10 0 0112 5c5.5 0 9.5 6 9.5 6a17 17 0 01-2.6 3.3"/><path d="M6.3 7.2A17 17 0 002.5 11S6.5 17 12 17a9.6 9.6 0 003.6-.7"/></svg>'
+          : '<svg viewBox="0 0 24 24" class="ico"><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg>';
+        eye.addEventListener('click', (e) => {
+          e.stopPropagation();
+          l.visible = l.visible === false;
+          markDirty();
+          repaintInk();
+          build(node);
+        });
+        row.appendChild(eye);
+
+        const name = A.el('span', 'ly-name');
+        name.textContent = l.name;
+        name.contentEditable = 'true';
+        name.spellcheck = false;
+        name.addEventListener('blur', () => {
+          l.name = (name.textContent || '').trim().slice(0, 20) || '图层';
+          name.textContent = l.name;
+          markDirty();
+        });
+        name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); name.blur(); } });
+        row.appendChild(name);
+
+        const num = A.el('span', 'ly-count');
+        num.textContent = (counts[l.id] || 0) + ' 笔';
+        row.appendChild(num);
+
+        const lock = A.el('button', 'ly-mini' + (l.locked ? ' is-on' : ''));
+        lock.textContent = l.locked ? '锁' : '开';
+        lock.title = '锁定后这一层不会被误画';
+        lock.addEventListener('click', (e) => {
+          e.stopPropagation();
+          l.locked = !l.locked;
+          markDirty();
+          build(node);
+        });
+        row.appendChild(lock);
+
+        if (layers.length > 1) {
+          const del = A.el('button', 'ly-mini ly-mini--danger');
+          del.textContent = '×';
+          del.title = '删除图层（层里的笔迹会被删掉）';
+          del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const at = layers.indexOf(l);
+            if (at < 0) return;
+            const before = p.strokes.slice();
+            const removed = p.strokes.filter(s => (s.layer || 'l0') === l.id);
+            p.strokes = p.strokes.filter(s => (s.layer || 'l0') !== l.id);
+            layers.splice(at, 1);
+            if (S.layer === l.id) S.layer = layers[layers.length - 1].id;
+            pushUndo({ t: 'lydel', layer: l, at: at, strokes: removed, before: before });
+            markDirty();
+            repaintInk();
+            build(node);
+            A.toast('已删除图层，可撤销');
+          });
+          row.appendChild(del);
+        }
+
+        row.addEventListener('click', () => {
+          S.layer = l.id;
+          markDirty();
+          build(node);
+        });
+
+        list.appendChild(row);
+      });
+    }
+
+    const node = A.el('div', 'ly-wrap');
+    build(node);
+
+    const acts = A.el('div', 'ly-acts');
+    const addBtn = A.el('button', 'chip-f');
+    addBtn.textContent = '＋ 新建图层';
+    addBtn.addEventListener('click', () => {
+      const n = layers.length + 1;
+      const nl = { id: A.uid('ly'), name: '图层 ' + n, visible: true, locked: false };
+      layers.push(nl);
+      S.layer = nl.id;
+      pushUndo({ t: 'lyadd', layer: nl });
+      markDirty();
+      build(node);
+    });
+    const mergeBtn = A.el('button', 'chip-f');
+    mergeBtn.textContent = '合并到底层';
+    mergeBtn.addEventListener('click', () => {
+      if (layers.length < 2) { A.toast('只有一个图层'); return; }
+      const base = layers[0];
+      const before = p.strokes.slice();
+      p.strokes.forEach(s => { if ((s.layer || 'l0') !== base.id) s.layer = base.id; });
+      const keep = layers[0];
+      p.layers = [keep];
+      S.layer = keep.id;
+      pushUndo({ t: 'lymerge', before: before, layersBefore: layers.slice() });
+      markDirty();
+      repaintInk();
+      build(node);
+      A.toast('已合并为一个图层');
+    });
+    acts.appendChild(addBtn);
+    acts.appendChild(mergeBtn);
+    node.appendChild(acts);
+
+    A.sheet.open({
+      title: '图层',
+      sub: '第 ' + (p.order + 1) + ' 页 · 共 ' + layers.length + ' 层',
+      node: node
+    });
+  }
+
+  /* ═════════════ 录音与回放 ═════════════ */
+
+  function recBar() {
+    if (!D.recBar) D.recBar = A.$('#recBar');
+    return D.recBar;
+  }
+
+  function showRecBar(on) {
+    const bar = recBar();
+    if (!bar) return;
+    bar.hidden = !on;
+  }
+
+  function paintRecUI(ms, dur) {
+    if (D.recTime) D.recTime.textContent = A.Record.fmt(ms);
+    const pct = dur ? Math.min(100, ms / dur * 100) : 0;
+    if (D.recFill) D.recFill.style.width = pct + '%';
+  }
+
+  async function toggleRec() {
+    if (!A.Record) { A.toast('录音模块未加载'); return; }
+
+    if (A.Record.isRecording()) {
+      const p = S.page;
+      const b = S.book;
+      if (!p || !b) return;
+      const info = await A.Record.stop(b.id, p.id);
+      const bar = recBar();
+      if (bar) bar.classList.remove('is-rec');
+      if (D.recPlay) D.recPlay.disabled = false;
+      if (info) {
+        p.rec = { key: info.key, dur: info.dur, at: A.now() };
+        paintRecUI(info.dur, info.dur);
+        markDirty();
+        persistPage(true);
+        A.toast('录音已保存，' + A.Record.fmt(info.dur) + '（回放时笔迹会跟着重现）', 3600);
+      }
+      return;
+    }
+
+    if (!S.page) return;
+    const started = await A.Record.start(S.page);
+    if (!started) return;
+
+    showRecBar(true);
+    const bar = recBar();
+    if (bar) bar.classList.add('is-rec');
+    if (D.recPlay) D.recPlay.disabled = true;
+    A.Record.onTick = (ms) => paintRecUI(ms, 0);
+    A.toast('正在录音 · 现在写的每一笔都会记住时间', 2800);
+  }
+
+  async function playRec() {
+    const p = S.page;
+    if (!p || !p.rec || !p.rec.key) {
+      A.toast('这一页还没有录音');
+      return;
+    }
+    showRecBar(true);
+    const dur = p.rec.dur || 0;
+    A.toast('回放中 · 笔迹会按当时的节奏重写一遍', 2600);
+
+    S.playT = 0;
+    S._lastVisible = -1;
+    repaintInk();
+
+    let raf = 0;
+    const tickRedraw = () => {
+      if (S.playT == null) return;
+      const n = visibleStrokes().length;
+      if (n !== S._lastVisible) {
+        S._lastVisible = n;
+        repaintInk();
+      }
+      raf = requestAnimationFrame(tickRedraw);
+    };
+    raf = requestAnimationFrame(tickRedraw);
+
+    await A.Record.play(p.rec.key, 0,
+      (t, total) => {
+        S.playT = t;
+        paintRecUI(t, total > 0 && isFinite(total) ? total : dur);
+      },
+      () => {
+        cancelAnimationFrame(raf);
+        S.playT = null;
+        S._lastVisible = -1;
+        repaintInk();
+        paintRecUI(dur, dur);
+        const bar = recBar();
+        if (bar) bar.classList.remove('is-rec');
+      }
+    );
+  }
+
+  function stopRecPlay() {
+    A.Record.pause();
+    S.playT = null;
+    S._lastVisible = -1;
+    repaintInk();
+    const p = S.page;
+    if (p && p.rec) paintRecUI(0, p.rec.dur || 0);
+    const bar = recBar();
+    if (bar) bar.classList.remove('is-rec');
+  }
+
+  /* 切页时把该页录音状态同步到浮条 */
+  function syncRecBar() {
+    const p = S.page;
+    if (!p || !p.rec) {
+      stopRecPlay();
+      showRecBar(false);
+      return;
+    }
+    showRecBar(true);
+    paintRecUI(0, p.rec.dur || 0);
+    if (D.recPlay) D.recPlay.disabled = false;
+  }
+
   function openReader() {
     const p = S.page;
     if (!p) return;
@@ -552,6 +835,36 @@
         }
       }
     }
+
+    // PDF / 图片底图：画在纸张之上、笔迹之下，笔迹坐标就是页面坐标
+    if (p.bgKey) paintBg(g, p, w, h);
+  }
+
+  /* 底图位图缓存：翻页/重绘不重复解码 */
+  const bgCache = new Map();
+
+  function paintBg(g, p, w, h) {
+    const key = p.bgKey;
+    const hit = bgCache.get(key);
+    if (hit && hit.complete && hit.naturalWidth) {
+      g.drawImage(hit, 0, 0, w, h);
+      return;
+    }
+    if (hit) return; // 正在加载
+    const img = new Image();
+    bgCache.set(key, img);
+    img.onload = () => {
+      if (S.page && S.page.bgKey === key) paintPaper();
+    };
+    img.onerror = () => {
+      bgCache.delete(key);
+    };
+    (async () => {
+      try {
+        const data = await A.db.getAsset(key);
+        if (data) img.src = data;
+      } catch (e) { }
+    })();
   }
 
   function repaintInk() {
@@ -560,7 +873,23 @@
     g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, cv.width, cv.height);
     g.setTransform(S.quality, 0, 0, S.quality, 0, 0);
-    if (S.page) A.Ink.drawAll(g, S.page.strokes || []);
+    if (S.page) A.Ink.drawAll(g, visibleStrokes());
+  }
+
+  /* 回放录音时只显示「已经写出来」的笔画；隐藏图层的笔也不画 */
+  function visibleStrokes() {
+    const p = S.page;
+    const list = (p && p.strokes) || [];
+    const layers = p ? ensureLayers(p) : null;
+    const hidden = layers ? new Set(layers.filter(l => l.visible === false).map(l => l.id)) : null;
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      if (S.playT != null && s.t != null && s.t > S.playT) continue;
+      if (hidden && s.layer && hidden.has(s.layer)) continue;
+      out.push(s);
+    }
+    return out;
   }
 
   function clearLive() {
@@ -575,6 +904,8 @@
   function applyView() {
     const v = S.view;
     D.pageEl.style.transform = 'translate(' + v.x + 'px,' + v.y + 'px) scale(' + v.scale + ')';
+    // 手柄是按屏幕尺寸算的，缩放后要跟着重画
+    if (S.sel && S.mode !== 'selXform') drawSelectionBox();
     const zv = A.$('#btnZoomReset');
     if (zv) zv.textContent = Math.round(v.scale * 100) + '%';
   }
@@ -1057,12 +1388,19 @@
   function startStroke(pt, pressure, forceTool) {
     const tool = forceTool || (S.tool === 'marker' ? 'marker' : (S.tool === 'pen' && S.kind === 'pencil' ? 'pencil' : 'pen'));
     const q = S.ruler.on ? snapToRuler(pt) : pt;
+    // 当前层锁住了就不让画，避免误覆盖
+    const cur = layerOf(S.page, S.layer);
+    if (cur && cur.locked) {
+      A.toast('「' + cur.name + '」已锁定，换个图层再写');
+      return;
+    }
     const s = {
       id: A.uid('sk'),
       tool: tool,
       kind: tool === 'pen' ? S.kind : (tool === 'pencil' ? 'pencil' : 'ball'),
       color: tool === 'eraser' ? '#000' : S.color,
       size: S.size,
+      layer: (cur && cur.id) || 'l0',
       pts: [{ x: q.x, y: q.y, p: pressure || 0.5 }],
       _committed: 0
     };
@@ -1255,6 +1593,8 @@
       A.Ink.drawStroke(bg, s);
     }
     delete s._committed;
+    // 录音中记下这一笔的相对时间，回放时按进度重现（Notability 的做法）
+    if (A.Record && A.Record.isRecording()) s.t = A.Record.stamp();
     S.page.strokes.push(s);
     pushUndo({ t: 'add', stroke: s });
     markDirty();
@@ -1359,13 +1699,134 @@
   function drawSelectionBox() {
     if (!S.sel) { D.selSvg.innerHTML = ''; return; }
     const b = S.sel.bbox;
-    D.selSvg.innerHTML =
-      '<rect x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h + '" fill="rgba(224,178,99,.06)" stroke="#e0b263" stroke-width="1.2" stroke-dasharray="6 4" rx="4"/>' +
-      ['nw', 'ne', 'sw', 'se'].map(k => {
-        const x = (k === 'nw' || k === 'sw') ? b.x : b.x + b.w;
-        const y = (k === 'nw' || k === 'ne') ? b.y : b.y + b.h;
-        return '<circle cx="' + x + '" cy="' + y + '" r="5" fill="#e0b263" />';
-      }).join('');
+    // 手柄要跟着视图缩放反向放大，否则缩小视图后点不中
+    const R = A.clamp(9 / Math.max(0.3, S.view.scale), 7, 46);
+    const cur = {
+      nw: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', se: 'nwse-resize',
+      n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', rot: 'grab'
+    };
+    const hs = [
+      ['nw', b.x, b.y], ['n', b.x + b.w / 2, b.y], ['ne', b.x + b.w, b.y],
+      ['w', b.x, b.y + b.h / 2], ['e', b.x + b.w, b.y + b.h / 2],
+      ['sw', b.x, b.y + b.h], ['s', b.x + b.w / 2, b.y + b.h], ['se', b.x + b.w, b.y + b.h]
+    ];
+    let svg = '<rect x="' + b.x + '" y="' + b.y + '" width="' + b.w + '" height="' + b.h +
+      '" fill="rgba(224,178,99,.06)" stroke="#e0b263" stroke-width="1.2" stroke-dasharray="6 4" rx="4"/>';
+
+    // 旋转手柄挂在顶部中间
+    const rx = b.x + b.w / 2, ry = b.y - R * 3;
+    svg += '<line x1="' + (b.x + b.w / 2) + '" y1="' + b.y + '" x2="' + rx + '" y2="' + ry +
+      '" stroke="#e0b263" stroke-width="1.2" stroke-dasharray="3 3"/>';
+    svg += '<circle data-h="rot" cx="' + rx + '" cy="' + ry + '" r="' + R +
+      '" fill="rgba(224,178,99,.92)" stroke="rgba(20,20,22,.55)" stroke-width="1.2" style="pointer-events:auto;cursor:' + cur.rot + '"/>';
+
+    hs.forEach(([k, x, y]) => {
+      svg += '<circle data-h="' + k + '" cx="' + x + '" cy="' + y + '" r="' + R +
+        '" fill="#e0b263" stroke="rgba(20,20,22,.55)" stroke-width="1.2" style="pointer-events:auto;cursor:' + cur[k] + '"/>';
+    });
+    D.selSvg.innerHTML = svg;
+  }
+
+  /* ── 选区缩放 / 旋转 ── */
+
+  function beginSelXform(handle, pt) {
+    const b = S.sel.bbox;
+    S.selXform = {
+      h: handle,
+      b0: { x: b.x, y: b.y, w: b.w, h: b.h },
+      start: pt,
+      snap: S.sel.strokes.map(s => s.pts.map(p => ({ x: p.x, y: p.y })))
+    };
+    S.mode = 'selXform';
+  }
+
+  function updateSelXform(pt) {
+    const xf = S.selXform;
+    if (!xf || !S.sel) return;
+    const b0 = xf.b0;
+    const cx = b0.x + b0.w / 2;
+    const cy = b0.y + b0.h / 2;
+
+    if (xf.h === 'rot') {
+      const a0 = Math.atan2(xf.start.y - cy, xf.start.x - cx);
+      let a1 = Math.atan2(pt.y - cy, pt.x - cx);
+      let d = a1 - a0;
+      // 15° 吸附，画正了更容易
+      const snapTo = Math.PI / 12;
+      if (Math.abs(d) > 0.02) d = Math.round(d / snapTo) * snapTo;
+      const cos = Math.cos(d), sin = Math.sin(d);
+      S.sel.strokes.forEach((s, si) => {
+        const snap = xf.snap[si];
+        s.pts.forEach((p, pi) => {
+          const ox = snap[pi].x - cx, oy = snap[pi].y - cy;
+          p.x = cx + ox * cos - oy * sin;
+          p.y = cy + ox * sin + oy * cos;
+        });
+        s._sm = null;
+      });
+      S.sel.bbox = A.Ink.bboxOf(S.sel.strokes, 8);
+      S.sel.rotated = true;
+      drawSelectionBox();
+      repaintInk();
+      return;
+    }
+
+    // 锚点：拖哪边，对面那条边固定
+    let ax = b0.x, ay = b0.y;
+    if (xf.h.indexOf('e') >= 0) ax = b0.x;
+    if (xf.h.indexOf('w') >= 0) ax = b0.x + b0.w;
+    if (xf.h.indexOf('s') >= 0) ay = b0.y;
+    if (xf.h.indexOf('n') >= 0) ay = b0.y + b0.h;
+
+    let sx = 1, sy = 1;
+    if (xf.h.indexOf('e') >= 0 || xf.h.indexOf('w') >= 0) {
+      const den = xf.start.x - ax;
+      if (Math.abs(den) > 0.5) sx = A.clamp((pt.x - ax) / den, 0.05, 24);
+    }
+    if (xf.h.indexOf('n') >= 0 || xf.h.indexOf('s') >= 0) {
+      const den = xf.start.y - ay;
+      if (Math.abs(den) > 0.5) sy = A.clamp((pt.y - ay) / den, 0.05, 24);
+    }
+    // 按住不动的方向不缩放，避免意外拉扁
+    if (xf.h === 'n' || xf.h === 's') sx = 1;
+    if (xf.h === 'e' || xf.h === 'w') sy = 1;
+
+    S.sel.strokes.forEach((s, si) => {
+      const snap = xf.snap[si];
+      s.pts.forEach((p, pi) => {
+        p.x = ax + (snap[pi].x - ax) * sx;
+        p.y = ay + (snap[pi].y - ay) * sy;
+      });
+      s.size = Math.max(0.6, (s._size0 || (s._size0 = s.size)) * Math.abs((sx + sy) / 2));
+      s._sm = null;
+    });
+
+    const nx = Math.min(ax, ax + b0.w * sx);
+    const ny = Math.min(ay, ay + b0.h * sy);
+    S.sel.bbox = { x: nx, y: ny, w: Math.abs(b0.w * sx), h: Math.abs(b0.h * sy) };
+    drawSelectionBox();
+    repaintInk();
+  }
+
+  function endSelXform() {
+    const xf = S.selXform;
+    S.selXform = null;
+    S.mode = null;
+    if (!xf || !S.sel) return;
+    const after = S.sel.strokes.map(s => s.pts.map(p => ({ x: p.x, y: p.y })));
+    // 判断是否真的变了
+    let moved = false;
+    for (let i = 0; i < after.length && !moved; i++) {
+      for (let j = 0; j < after[i].length; j++) {
+        if (Math.abs(after[i][j].x - xf.snap[i][j].x) > 0.4 ||
+          Math.abs(after[i][j].y - xf.snap[i][j].y) > 0.4) { moved = true; break; }
+      }
+    }
+    if (moved) {
+      pushUndo({ t: 'xform', strokes: S.sel.strokes.slice(), before: xf.snap, after: after });
+      markDirty();
+      showCtxFloat();
+    }
   }
 
   function moveBBox(b, dx, dy) {
@@ -1381,11 +1842,21 @@
   function showCtxFloat() {
     const b = S.sel.bbox;
     const r = stageRect();
+    const host = D.viewStu.getBoundingClientRect();
     const px = r.left + S.view.x + (b.x + b.w / 2) * S.view.scale;
-    const py = r.top + S.view.y + b.y * S.view.scale - 12;
+    // 工具条放选区下方：上方要留给旋转手柄，否则手柄被盖住点不到
+    const below = r.top + S.view.y + (b.y + b.h) * S.view.scale + 14;
+    const py = below;
     const el = D.ctxFloat;
-    el.style.left = (px - D.viewStu.getBoundingClientRect().left) + 'px';
-    el.style.top = (py - D.viewStu.getBoundingClientRect().top) + 'px';
+    el.style.left = (px - host.left) + 'px';
+    el.style.top = (py - host.top) + 'px';
+    // 下方放不下（贴着工具栏）时翻到上方更远处
+    requestAnimationFrame(() => {
+      const er = el.getBoundingClientRect();
+      if (er.bottom > window.innerHeight - 8) {
+        el.style.top = (r.top + S.view.y + b.y * S.view.scale - 56 - host.top) + 'px';
+      }
+    });
     el.classList.add('is-on');
     el.innerHTML =
       '<button data-a="copy">复制</button>' +
@@ -1449,11 +1920,21 @@
   }
 
   /* ───────────── 文字 ───────────── */
+  const TEXT_FONTS = [
+    { id: 'system', name: '系统黑体', cls: '' },
+    { id: 'wenkai', name: '手写楷体', cls: 'font-wenkai' },
+    { id: 'song', name: '宋体', cls: 'font-song' },
+    { id: 'kai', name: '楷体', cls: 'font-kai' },
+    { id: 'yuan', name: '圆体', cls: 'font-yuan' },
+    { id: 'round', name: '丸体', cls: 'font-round' }
+  ];
+
   function addTextBox(pt) {
     const t = {
       id: A.uid('tx'),
       x: pt.x, y: pt.y, w: 240,
       size: 20,
+      font: S.textFont || 'system',
       color: '#1c1c1e',
       text: ''
     };
@@ -1479,6 +1960,8 @@
       el.style.width = t.w + 'px';
       el.style.fontSize = t.size + 'px';
       el.style.color = t.color;
+      const f = TEXT_FONTS.find(x => x.id === (t.font || 'system'));
+      if (f && f.cls) el.classList.add(f.cls);
       el.textContent = t.text || '';
       el.addEventListener('blur', () => {
         t.text = el.textContent;
@@ -1489,11 +1972,77 @@
         markDirty();
       });
       el.addEventListener('input', () => { t.text = el.textContent; });
+      let pressT = 0, moved = false;
       el.addEventListener('pointerdown', (e) => {
-        if (S.tool === 'text') { e.stopPropagation(); return; }
         e.stopPropagation();
+        moved = false;
+        clearTimeout(pressT);
+        pressT = setTimeout(() => {
+          if (moved) return;
+          el.blur();
+          openTextOptions(t);
+        }, 560);
       });
+      el.addEventListener('pointermove', () => { moved = true; clearTimeout(pressT); });
+      el.addEventListener('pointerup', () => clearTimeout(pressT));
+      el.addEventListener('pointercancel', () => clearTimeout(pressT));
       D.textLayer.appendChild(el);
+    });
+  }
+
+  function openTextOptions(t) {
+    const node = A.el('div', 'tx-opt');
+    node.innerHTML =
+      '<div class="field"><span>字体</span></div>' +
+      '<div class="font-grid">' +
+      TEXT_FONTS.map(f => '<button class="font-chip' + ((t.font || 'system') === f.id ? ' is-on' : '') +
+        '" data-f="' + f.id + '"><span class="fc-sample ' + f.cls + '">Aa 字</span><em>' + f.name + '</em></button>').join('') +
+      '</div>' +
+      '<label class="field"><span>字号 <b id="txSizeVal">' + (t.size || 20) + '</b></span>' +
+      '<input type="range" id="txSize" min="10" max="96" value="' + (t.size || 20) + '"></label>' +
+      '<div class="field"><span>颜色</span></div>' +
+      '<div class="opt-grid">' + COLORS.map(c =>
+        '<button class="opt" data-c="' + c + '" style="display:flex;align-items:center;justify-content:center' +
+        ((t.color || '#1c1c1e') === c ? ';box-shadow:inset 0 0 0 2px var(--accent)' : '') + '">' +
+        '<span style="width:22px;height:22px;border-radius:50%;background:' + c + ';border:1px solid rgba(255,255,255,.2)"></span></button>'
+      ).join('') + '</div>' +
+      '<div class="list-sep"></div>' +
+      '<button class="list-item is-danger" id="txDel"><span class="li-grow">删除这段文字</span></button>';
+
+    A.sheet.open({
+      title: '文字样式',
+      node: node,
+      onMount: (body, sh) => {
+        A.$$('.font-chip', body).forEach(btn => btn.addEventListener('click', () => {
+          t.font = btn.dataset.f;
+          S.textFont = btn.dataset.f;
+          A.$$('.font-chip', body).forEach(x => x.classList.toggle('is-on', x === btn));
+          renderTexts();
+          markDirty();
+          // 内置字体第一次用到时会有个解码等待，给个提示
+          if (t.font === 'wenkai') A.toast('正在加载手写字体，首次会慢一点', 1800);
+        }));
+        const sz = body.querySelector('#txSize');
+        sz.addEventListener('input', () => {
+          t.size = parseInt(sz.value, 10);
+          body.querySelector('#txSizeVal').textContent = t.size;
+          renderTexts();
+          markDirty();
+        });
+        A.$$('.opt', body).forEach(b => b.addEventListener('click', () => {
+          t.color = b.dataset.c;
+          A.$$('.opt', body).forEach(x => x.style.boxShadow = '');
+          b.style.boxShadow = 'inset 0 0 0 2px var(--accent)';
+          renderTexts();
+          markDirty();
+        }));
+        body.querySelector('#txDel').addEventListener('click', () => {
+          S.page.texts = S.page.texts.filter(x => x !== t);
+          renderTexts();
+          markDirty();
+          sh.close();
+        });
+      }
     });
   }
 
@@ -1730,17 +2279,70 @@
     } else if (op.t === 'imgsize') {
       if (reverse) { op.im.w = op.w0; op.im.h = op.h0; }
       else { op.im.w = op.w1; op.im.h = op.h1; }
+    } else if (op.t === 'xform') {
+      const data = reverse ? op.before : op.after;
+      op.strokes.forEach((s, si) => {
+        const d = data[si];
+        if (!d) return;
+        s.pts.forEach((p, pi) => {
+          if (d[pi]) { p.x = d[pi].x; p.y = d[pi].y; }
+        });
+        s._sm = null;
+      });
+      if (S.sel) S.sel.bbox = A.Ink.bboxOf(S.sel.strokes, 8);
+    } else if (op.t === 'lydel') {
+      if (reverse) {
+        if (S.page.layers.indexOf(op.layer) < 0) {
+          S.page.layers.splice(Math.min(op.at, S.page.layers.length), 0, op.layer);
+        }
+        S.page.strokes = op.before.slice();
+        S.layer = op.layer.id;
+      } else {
+        const i = S.page.layers.indexOf(op.layer);
+        if (i >= 0) S.page.layers.splice(i, 1);
+        op.strokes.forEach(s => {
+          const j = list.indexOf(s);
+          if (j >= 0) list.splice(j, 1);
+        });
+        if (S.layer === op.layer.id && S.page.layers.length) {
+          S.layer = S.page.layers[S.page.layers.length - 1].id;
+        }
+      }
+    } else if (op.t === 'lyadd') {
+      if (reverse) {
+        const i = S.page.layers.indexOf(op.layer);
+        if (i >= 0) S.page.layers.splice(i, 1);
+        if (S.layer === op.layer.id) S.layer = (S.page.layers[0] || {}).id || 'l0';
+      } else if (S.page.layers.indexOf(op.layer) < 0) {
+        S.page.layers.push(op.layer);
+        S.layer = op.layer.id;
+      }
+    } else if (op.t === 'lymerge') {
+      if (reverse) {
+        S.page.strokes = op.before.slice();
+        S.page.layers = op.layersBefore.slice();
+        S.layer = op.layersBefore[0].id;
+      } else {
+        const base = S.page.layers[0];
+        S.page.strokes.forEach(s => { s.layer = base.id; });
+        S.page.layers = [base];
+        S.layer = base.id;
+      }
     }
   }
 
   /* ═════════════ 保存 ═════════════ */
 
   function slimStroke(s) {
-    return {
+    const o = {
       id: s.id, tool: s.tool, kind: s.kind, shape: s.shape,
       color: s.color, size: s.size,
       pts: s.pts.map(p => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100, p: Math.round((p.p || .5) * 1000) / 1000 }))
     };
+    // 录音时间戳与图层归属必须一起存下来，否则重开就丢了
+    if (s.t != null) o.t = s.t;
+    if (s.layer != null) o.layer = s.layer;
+    return o;
   }
 
   function markDirty() {
@@ -1758,6 +2360,10 @@
       w: p.w, h: p.h, preset: p.preset,
       paper: p.paper, paperColor: p.paperColor,
       srcKey: p.srcKey, sliceTop: p.sliceTop, docH: p.docH,
+      bgKey: p.bgKey, pdfPage: p.pdfPage, pdfTotal: p.pdfTotal, pdfText: p.pdfText,
+      heading: p.heading, headingLevel: p.headingLevel,
+      layers: p.layers || null,
+      rec: p.rec || null,
       strokes: (p.strokes || []).map(slimStroke),
       texts: p.texts || [],
       images: (p.images || []).map(im => ({ id: im.id, src: im.src, x: im.x, y: im.y, w: im.w, h: im.h }))
@@ -1892,6 +2498,37 @@
     g.scale(1, 1);
     A.Ink.drawAll(g, p.strokes || []);
     g.restore();
+
+    // PDF 页缩略图：底图可能还没解码，异步补上再重画一遍笔迹
+    if (p.bgKey) {
+      const hit = bgCache.get(p.bgKey);
+      if (hit && hit.complete && hit.naturalWidth) {
+        g.save();
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.drawImage(hit, 0, 0, cv.width, cv.height);
+        g.restore();
+        // 底图盖住了笔迹，重画一次
+        A.Ink.drawAll(g, p.strokes || []);
+      } else {
+        A.db.getAsset(p.bgKey).then((data) => {
+          if (!data) return;
+          const img = new Image();
+          img.onload = () => {
+            bgCache.set(p.bgKey, img);
+            g.save();
+            g.setTransform(1, 0, 0, 1, 0, 0);
+            g.clearRect(0, 0, cv.width, cv.height);
+            g.scale(scale * 2, scale * 2);
+            g.fillStyle = '#fff';
+            g.fillRect(0, 0, p.w, p.h);
+            g.drawImage(img, 0, 0, p.w, p.h);
+            g.restore();
+            A.Ink.drawAll(g, p.strokes || []);
+          };
+          img.src = data;
+        }).catch(() => { });
+      }
+    }
     return cv;
   }
 
@@ -1954,6 +2591,10 @@
       '<div class="list">' +
       '<button class="list-item" data-a="paper"><svg class="ico" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="li-grow">纸张与背景</span></button>' +
       '<button class="list-item" data-a="import"><svg class="ico" viewBox="0 0 24 24"><path d="M12 16V4m0 12l-4-4m4 4l4-4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg><span class="li-grow">把 HTML 追加到这本笔记</span></button>' +
+      '<button class="list-item" data-a="pdf"><svg class="ico" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z"/><path d="M14 3v5h5"/></svg><span class="li-grow">导入 PDF 批注<span class="li-sub">新建一本 PDF 笔记</span></span></button>' +
+      '<button class="list-item" data-a="outline"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h3M4 12h3M4 18h3"/><path d="M10 6h10M10 12h7M10 18h9"/></svg><span class="li-grow">大纲 / 脑图<span class="li-sub">按页面内容自动生成</span></span></button>' +
+      '<button class="list-item" data-a="flash"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="M17 9h4v9a2 2 0 01-2 2h-2"/><path d="M8 12h4"/></svg><span class="li-grow">闪卡复习<span class="li-sub">间隔重复排程</span></span></button>' +
+      '<button class="list-item" data-a="layers"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg><span class="li-grow">图层<span class="li-sub">分层画、分别隐藏</span></span></button>' +
       '<button class="list-item" data-a="rename"><svg class="ico" viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg><span class="li-grow">重命名笔记</span></button>' +
       '<button class="list-item" data-a="fit"><svg class="ico" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span class="li-grow">切换到适应整页</span></button>' +
       '<div class="list-sep"></div>' +
@@ -1969,6 +2610,10 @@
           sh.close();
           if (a === 'paper') setTimeout(openPaperPanel, 200);
           if (a === 'import') setTimeout(() => A.$('#fileHtml').click(), 200);
+          if (a === 'pdf') setTimeout(() => A.PdfImport && A.PdfImport.pick(), 200);
+          if (a === 'outline') setTimeout(() => A.Outline && A.Outline.open('outline'), 200);
+          if (a === 'flash') setTimeout(() => A.Flashcard && A.Flashcard.open(), 200);
+          if (a === 'layers') setTimeout(openLayersPanel, 200);
           if (a === 'rename') setTimeout(() => { D.docTitle.focus(); D.docTitle.select(); }, 200);
           if (a === 'help') setTimeout(() => { A.$('#footHelp') && A.$('#footHelp').click(); }, 200);
         }));
@@ -1985,6 +2630,17 @@
     g.fillStyle = p.paperColor || '#ffffff';
     g.fillRect(0, 0, p.w, p.h);
     drawPaperPattern(g, p);
+
+    // PDF / 图片底图：必须合成进去，否则批注导出来只剩笔迹
+    if (p.bgKey) {
+      try {
+        const data = await A.db.getAsset(p.bgKey);
+        if (data) {
+          const bg = await A.loadImage(data);
+          g.drawImage(bg, 0, 0, p.w, p.h);
+        }
+      } catch (e) { }
+    }
 
     // 笔迹先画在透明层上，这样橡皮只擦墨不擦纸
     const ink = document.createElement('canvas');
@@ -2003,7 +2659,15 @@
     // 文字
     (p.texts || []).forEach(t => {
       g.fillStyle = t.color || '#1c1c1e';
-      g.font = (t.size || 20) + 'px -apple-system,"PingFang SC",sans-serif';
+      const fam = {
+        system: '-apple-system,"PingFang SC",sans-serif',
+        wenkai: '"MoYu WenKai","PingFang SC",serif',
+        song: '"Songti SC","SimSun",serif',
+        kai: '"Kaiti SC","STKaiti",serif',
+        yuan: '"Yuanti SC","PingFang SC",sans-serif',
+        round: '"Hiragino Maru Gothic ProN","PingFang SC",sans-serif'
+      }[t.font || 'system'] || '-apple-system,"PingFang SC",sans-serif';
+      g.font = (t.size || 20) + 'px ' + fam;
       g.textBaseline = 'top';
       const lines = wrapText(g, t.text || '', t.w - 16);
       lines.forEach((ln, i) => g.fillText(ln, t.x + 8, t.y + 8 + i * (t.size || 20) * 1.4));
@@ -2103,10 +2767,41 @@
 
   /* ═════════════ 绑定 ═════════════ */
 
+  /* 选区手柄：缩放 + 旋转。事件绑在 svg 上，手柄本身 pointer-events:auto */
+  function bindSelectionHandles() {
+    const svg = D.selSvg;
+    if (!svg) return;
+
+    svg.addEventListener('pointerdown', (e) => {
+      const h = e.target && e.target.dataset ? e.target.dataset.h : null;
+      if (!h || !S.sel) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const pt = toPage(e.clientX, e.clientY);
+      beginSelXform(h, pt);
+      try { svg.setPointerCapture(e.pointerId); } catch (err) { }
+    }, { passive: false });
+
+    svg.addEventListener('pointermove', (e) => {
+      if (S.mode !== 'selXform') return;
+      e.preventDefault();
+      updateSelXform(toPage(e.clientX, e.clientY));
+    }, { passive: false });
+
+    const end = (e) => {
+      if (S.mode !== 'selXform') return;
+      endSelXform();
+      try { svg.releasePointerCapture(e.pointerId); } catch (err) { }
+    };
+    svg.addEventListener('pointerup', end);
+    svg.addEventListener('pointercancel', end);
+  }
+
   function bind() {
     const on = (sel, ev, fn) => { const n = A.$(sel); if (n) n.addEventListener(ev, fn); };
 
     bindRuler();
+    bindSelectionHandles();
     on('#btnBack', 'click', closeBook);
     on('#btnUndo', 'click', undo);
     on('#btnRedo', 'click', redo);
@@ -2114,6 +2809,14 @@
     on('#btnExport', 'click', openExportPanel);
     on('#btnMore', 'click', openMorePanel);
     on('#btnRead', 'click', openReader);
+    on('#btnOutline', 'click', () => { if (A.Outline) A.Outline.open('outline'); });
+    on('#btnRec', 'click', toggleRec);
+    on('#recPlay', 'click', playRec);
+    on('#recStop', 'click', stopRecPlay);
+    on('#recClose', 'click', () => {
+      if (A.Record && A.Record.isRecording()) { A.toast('先停止录音'); return; }
+      showRecBar(false);
+    });
     on('#btnRuler', 'click', () => toggleRuler());
     on('#btnPick', 'click', () => setPicking(!S.picking));
     on('#btnReaderClose', 'click', closeReader);
@@ -2258,7 +2961,9 @@
     const now = A.now();
     const srcKey = A.uid('as');
     await A.db.putAsset(srcKey, text);
-    const h = await measureHtml(text, HTML_PAGE_W);
+    const m = await measureHtmlFull(text, HTML_PAGE_W);
+    const h = m.h;
+    const heads = m.heads || [];
     const slices = Math.max(1, Math.min(40, Math.ceil(h / HTML_SLICE_H)));
 
     const book = {
@@ -2274,24 +2979,53 @@
 
     const pages = [];
     for (let i = 0; i < slices; i++) {
-      pages.push(htmlPage(book.id, i, srcKey, i * HTML_SLICE_H, HTML_SLICE_H, h));
+      const top = i * HTML_SLICE_H;
+      const bot = top + HTML_SLICE_H;
+      // 每页挂上落在这一页范围内的第一个标题，大纲就有真实结构了
+      const hit = heads.find(hd => hd[0] >= top && hd[0] < bot);
+      const p = htmlPage(book.id, i, srcKey, top, HTML_SLICE_H, h);
+      if (hit) {
+        p.heading = hit[2];
+        p.headingLevel = hit[1];
+      }
+      pages.push(p);
+    }
+    // 整本书的标题清单留给大纲做初值
+    if (heads.length) {
+      book.outline = [];
+      pages.forEach(p => {
+        if (p.heading) {
+          book.outline.push({
+            id: 'ol_' + p.id,
+            text: p.heading,
+            pageId: p.id,
+            level: Math.min(4, Math.max(1, p.headingLevel || 1))
+          });
+        }
+      });
+      await A.db.saveBook(book);
     }
     await A.db.savePages(pages);
     return book.id;
   }
 
   function measureHtml(src, width) {
+    return measureHtmlFull(src, width).then(r => r.h);
+  }
+
+  /* 除了高度，顺带把原文的标题结构捞出来，给大纲用 */
+  function measureHtmlFull(src, width) {
     return new Promise((resolve) => {
       const f = document.createElement('iframe');
       f.style.cssText = 'position:fixed;left:-99999px;top:0;width:' + width + 'px;height:1000px;border:0;visibility:hidden;';
       document.body.appendChild(f);
-      let best = 0, settle = 0, done = false;
+      let best = 0, settle = 0, done = false, heads = [];
       const finish = () => {
         if (done) return;
         done = true;
         clearTimeout(settle);
         try { f.remove(); } catch (e) { }
-        resolve(Math.max(best, 600));
+        resolve({ h: Math.max(best, 600), heads: heads });
       };
       // 高度是逐步长出来的（字体、图片、布局回填），取稳定后的最大值
       const bump = (h) => {
@@ -2299,7 +3033,10 @@
         clearTimeout(settle);
         settle = setTimeout(finish, 500);
       };
-      A.HtmlPage.mount(f, src, { onHeight: (h) => bump(h) })
+      A.HtmlPage.mount(f, src, {
+        onHeight: (h) => bump(h),
+        onHeads: (list) => { if (Array.isArray(list) && list.length > heads.length) heads = list; }
+      })
         .then((h) => bump(h || 0))
         .catch(() => bump(0));
       setTimeout(finish, 7000);
@@ -2320,6 +3057,8 @@
   A.Studio = {
     init, openBook, closeBook, blankPage, htmlPage, addPage, goPage,
     exportPdf, exportPng, fitWidth, fitPage, S, createHtmlBook, measureHtml,
-    openPagesPanel, openPaperPanel, openExportPanel, insertImage, saveNow
+    openPagesPanel, openPaperPanel, openExportPanel, insertImage, saveNow,
+    openLayersPanel, toggleRec, playRec, stopRecPlay, repaintInk,
+    ensureLayers, layerOf, drawSelectionBox, visibleStrokes, renderPageToCanvas
   };
 })(window.MY);

@@ -107,7 +107,9 @@ window.MY = window.MY || {};
       this._onClose = opts.onClose || null;
       scrim.classList.add('is-on');
       sheet.classList.add('is-on');
+      this._locked = !!opts.locked;
       if (opts.onMount) requestAnimationFrame(() => opts.onMount(body, this));
+      return { body: body, close: () => this.close() };
     },
     close() {
       const sheet = A.$('#sheet'), scrim = A.$('#sheetScrim');
@@ -118,9 +120,10 @@ window.MY = window.MY || {};
       if (cb) setTimeout(cb, 260);
     },
     isOpen() {
-      const s = A.$('#sheet');
-      return s && s.classList.contains('is-on');
-    }
+      const sheet = A.$('#sheet');
+      return !!(sheet && sheet.classList.contains('is-on'));
+    },
+    isLocked() { return !!this._locked; }
   };
   A.sheet = Sheet;
 
