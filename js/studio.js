@@ -1583,7 +1583,7 @@
     node.innerHTML =
       '<div class="list">' +
       '<button class="list-item" data-a="pdf"><svg class="ico" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg><span class="li-grow">导出 PDF<span class="li-sub">整本笔记，适合打印和分享</span></span></button>' +
-      '<button class="list-item" data-a="png"><svg class="ico" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg><span class="li-grow">导出当前页 PNG<span class="li-sub">透明底 / 白底可打印</span></span></button>' +
+      '<button class="list-item" data-a="png"><svg class="ico" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg><span class="li-grow">导出当前页 PNG<span class="li-sub">含纸张底色，可直接打印或贴进文档</span></span></button>' +
       '<div class="list-sep"></div>' +
       '<button class="list-item" data-a="backup"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4v10m0 0l-3.5-3.5M12 14l3.5-3.5"/><path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg><span class="li-grow">备份整库<span class="li-sub">JSON 文件，可恢复</span></span></button>' +
       '</div>' +
