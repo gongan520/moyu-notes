@@ -20,6 +20,7 @@
     A.Library.init();
     A.Studio.init();
     if (A.FreeNotesUI) A.FreeNotesUI.init();
+    if (A.Version) A.Version.init();
 
     (async () => {
       try { await A.dbReady; } catch (e) { }
