@@ -470,72 +470,96 @@
     bindReaderInk();
   }
 
-  /* 阅读模式笔迹层不拦截指针：touch/鼠标走 iframe 原生滚动与链接，
-     只有 pen 事件在 iframe 文档里被捕获后写到上层 canvas。 */
+  /* 阅读模式 canvas 直接捕获 pen 写字；
+     touch 转发为 iframe 内部滚动；
+     目录区域（rail）让笔尖点击穿透到 iframe。 */
+  let rTouchScroll = null;   // { id, lastX, lastY }
+
   function bindReaderInk() {
-    const frame = A.$('#readerFrame');
-    if (!frame || frame.__moyuInkBound) return;
-    frame.__moyuInkBound = true;
-    const bindDoc = () => {
-      let doc = null, win = null;
-      try { doc = frame.contentDocument; win = frame.contentWindow; } catch (e) { }
-      if (!doc || doc.__moyuInkBound) return;
-      doc.__moyuInkBound = true;
-      doc.addEventListener('pointerdown', onReaderDocDown, true);
-      doc.addEventListener('pointermove', onReaderDocMove, true);
-      doc.addEventListener('pointerup', onReaderDocUp, true);
-      doc.addEventListener('pointercancel', onReaderDocUp, true);
-      if (win) win.addEventListener('scroll', () => repaintReaderInk(), { passive: true });
-    };
-    frame.addEventListener('load', bindDoc);
-    if (frame.contentDocument && frame.contentDocument.readyState === 'complete') bindDoc();
+    if (!rInk || rInk.__moyuInkBound) return;
+    rInk.__moyuInkBound = true;
+
+    rInk.addEventListener('pointerdown', (e) => {
+      if (!readerOpen) return;
+      const railW = getReaderRailWidth();
+      if (railW > 0 && e.clientX - rInk.getBoundingClientRect().left < railW) return;
+      if (e.pointerType === 'pen') {
+        if (rTool === 'undo') return;
+        const pt = readerPoint(e);
+        if (rTool === 'eraser') { eraseReaderStrokeAt(pt); e.preventDefault(); return; }
+        rCur = {
+          pointerId: e.pointerId,
+          tool: rTool,
+          color: S.color || '#1c1c1e',
+          size: rTool === 'marker' ? 14 : Math.max(2.5, S.size || 3),
+          pts: [pt]
+        };
+        try { rInk.setPointerCapture(e.pointerId); } catch (err) { }
+        repaintReaderInk();
+        e.preventDefault();
+      } else if (e.pointerType === 'touch' || e.pointerType === 'mouse') {
+        rTouchScroll = { id: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+        try { rInk.setPointerCapture(e.pointerId); } catch (err) { }
+        e.preventDefault();
+      }
+    });
+
+    rInk.addEventListener('pointermove', (e) => {
+      if (rCur && e.pointerId === rCur.pointerId) {
+        const pt = readerPoint(e);
+        if (rCur.tool === 'eraser') eraseReaderStrokeAt(pt);
+        else rCur.pts.push(pt);
+        repaintReaderInk();
+        e.preventDefault();
+        return;
+      }
+      if (rTouchScroll && e.pointerId === rTouchScroll.id) {
+        const frame = A.$('#readerFrame');
+        if (frame && frame.contentWindow) {
+          try {
+            frame.contentWindow.scrollBy(
+              rTouchScroll.lastX - e.clientX,
+              rTouchScroll.lastY - e.clientY
+            );
+          } catch (err) { }
+        }
+        rTouchScroll.lastX = e.clientX;
+        rTouchScroll.lastY = e.clientY;
+        e.preventDefault();
+      }
+    });
+
+    rInk.addEventListener('pointerup', (e) => {
+      if (rCur) {
+        if (rCur.tool !== 'eraser') {
+          if (rCur.pts.length === 1) rCur.pts.push({ x: rCur.pts[0].x + 0.1, y: rCur.pts[0].y + 0.1 });
+          rStrokes.push(rCur);
+          saveReaderStrokes();
+        }
+        rCur = null;
+        repaintReaderInk();
+        e.preventDefault();
+        return;
+      }
+      if (rTouchScroll && e.pointerId === rTouchScroll.id) {
+        rTouchScroll = null;
+        e.preventDefault();
+      }
+    });
+
+    rInk.addEventListener('pointercancel', () => { rCur = null; rTouchScroll = null; repaintReaderInk(); });
   }
 
-  function readerPointFromFrame(e) {
-    const frame = A.$('#readerFrame');
-    if (!frame) return { x: 0, y: 0 };
-    const r = frame.getBoundingClientRect();
-    const off = readerScrollOffset();
-    return { x: e.clientX - r.left, y: e.clientY - r.top + off };
-  }
-
-  function onReaderDocDown(e) {
-    if (!rInk || !readerOpen) return;
-    if (e.pointerType !== 'pen') return;          // 手指/鼠标保留网页原生交互
-    if (e.target && e.target.closest && e.target.closest('.rail,a,button')) return; // 目录/链接可点
-    if (rTool === 'undo') return;
-    const pt = readerPointFromFrame(e);
-    if (rTool === 'eraser') { eraseReaderStrokeAt(pt); e.preventDefault(); return; }
-    rCur = {
-      tool: rTool,
-      color: S.color || '#1c1c1e',
-      size: rTool === 'marker' ? 14 : Math.max(2.5, S.size || 3),
-      pts: [pt]
-    };
-    try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
-    repaintReaderInk();
-    e.preventDefault();
-  }
-
-  function onReaderDocMove(e) {
-    if (!rCur || e.pointerType !== 'pen') return;
-    const pt = readerPointFromFrame(e);
-    if (rCur.tool === 'eraser') eraseReaderStrokeAt(pt);
-    else rCur.pts.push(pt);
-    repaintReaderInk();
-    e.preventDefault();
-  }
-
-  function onReaderDocUp(e) {
-    if (!rCur || e.pointerType !== 'pen') return;
-    if (rCur.tool !== 'eraser') {
-      if (rCur.pts.length === 1) rCur.pts.push({ x: rCur.pts[0].x + 0.1, y: rCur.pts[0].y + 0.1 });
-      rStrokes.push(rCur);
-      saveReaderStrokes();
-    }
-    rCur = null;
-    repaintReaderInk();
-    e.preventDefault();
+  /* 读取 iframe 里 .rail 的宽度，用于判断是否在目录区域内 */
+  function getReaderRailWidth() {
+    try {
+      const frame = A.$('#readerFrame');
+      const d = frame && frame.contentDocument;
+      if (!d) return 0;
+      const rail = d.querySelector('.rail');
+      if (!rail) return 0;
+      return rail.getBoundingClientRect().width;
+    } catch (e) { return 0; }
   }
 
   function readerInkSize() {
@@ -603,10 +627,15 @@
     ctx.restore();
   }
 
-  /* 原 readerInk 上的指针监听已移除：统一由 iframe 文档转发 pen 事件，
-     避免画布盖住目录链接与正文滚动。 */
+  function readerPoint(e) {
+    const r = rInk.getBoundingClientRect();
+    const off = readerScrollOffset();
+    return { x: e.clientX - r.left, y: e.clientY - r.top + off };
+  }
 
-  // 橡皮整笔删除：命中即删
+  /* 阅读模式 canvas 直接捕获 pen 写字；
+     touch 转发为 iframe 内部滚动；
+     目录区域（rail）让笔尖点击穿透到 iframe。 */
   function eraseReaderStrokeAt(pt) {
     for (let i = rStrokes.length - 1; i >= 0; i--) {
       const s = rStrokes[i];

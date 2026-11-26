@@ -1859,7 +1859,7 @@ html[data-theme="light"] .lookup{ background:rgba(255,255,255,.97); }
 
 #readerInk{
   position:absolute; left:0; top:0; right:0; bottom:0;
-  display:block; pointer-events:none;   /* 只显示笔迹；事件由 iframe 文档转发 pen 落笔 */
+  display:block; pointer-events:auto;
   touch-action:none;
 }
 .reader-doc.reader-browse #readerInk{ pointer-events:none; }
