@@ -1295,6 +1295,11 @@
     drawSizePreview();
   }
 
+  function setKind(k) {
+    S.kind = k;
+    A.$$('#penKinds .chip').forEach(c => c.classList.toggle('is-on', c.dataset.kind === k));
+  }
+
   function drawSizePreview() {
     const cv = D.sizePrev;
     if (!cv) return;
@@ -2589,22 +2594,29 @@
     { id: 'round', name: '丸体', cls: 'font-round' }
   ];
 
-  function addTextBox(pt) {
+  function addTextBox(pt, opts) {
+    // 允许直接传一个配置对象：addTextBox({x,y,w,size,color,text})
+    opts = opts || pt || {};
     const t = {
       id: A.uid('tx'),
-      x: pt.x, y: pt.y, w: 240,
-      size: 20,
-      font: S.textFont || 'system',
-      color: '#1c1c1e',
-      text: ''
+      x: opts.x != null ? opts.x : pt.x,
+      y: opts.y != null ? opts.y : pt.y,
+      w: opts.w || 240,
+      size: opts.size || 20,
+      font: opts.font || S.textFont || 'system',
+      color: opts.color || '#1c1c1e',
+      text: opts.text || ''
     };
     S.page.texts.push(t);
     renderTexts();
-    requestAnimationFrame(() => {
-      const el = D.textLayer.querySelector('[data-id="' + t.id + '"]');
-      if (el) { el.focus(); }
-    });
+    if (opts.focus !== false) {
+      requestAnimationFrame(() => {
+        const el = D.textLayer.querySelector('[data-id="' + t.id + '"]');
+        if (el) { el.focus(); }
+      });
+    }
     markDirty();
+    return t;
   }
 
   function renderTexts() {
@@ -3902,6 +3914,7 @@
     openLayersPanel, toggleRec, playRec, stopRecPlay, repaintInk,
     ensureLayers, layerOf, drawSelectionBox, visibleStrokes, renderPageToCanvas,
     deletePage, movePage, flashAnchor, speakPage,
-    setTool, setColor, setSize, undo, redo, openReader, closeReader
+    setTool, setColor, setSize, setKind, undo, redo, openReader, closeReader,
+    addTextBox
   };
 })(window.MY);
