@@ -133,6 +133,7 @@ img{-webkit-user-drag:none;}
     // 阅读模式：整篇连续显示，锚点/链接走浏览器原生行为；目录栏强制可见
     if (opts.reader) {
       const READER_CSS = '<style id="__moyu_reader_css">' +
+        'html[data-moyu-reader]{scroll-behavior:auto!important;}' +
         '@media(max-width:1080px){' +
         'html[data-moyu-reader] .rail{display:block!important;position:fixed!important;left:0;top:0;bottom:0;width:270px!important;z-index:9998!important;overflow-y:auto!important;}' +
         'html[data-moyu-reader] main{margin-left:270px!important;}' +

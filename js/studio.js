@@ -498,7 +498,7 @@
         repaintReaderInk();
         e.preventDefault();
       } else if (e.pointerType === 'touch' || e.pointerType === 'mouse') {
-        rTouchScroll = { id: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+        rTouchScroll = { id: e.pointerId, lastX: e.clientX, lastY: e.clientY, vy: 0, lastT: Date.now() };
         try { rInk.setPointerCapture(e.pointerId); } catch (err) { }
         e.preventDefault();
       }
@@ -514,17 +514,27 @@
         return;
       }
       if (rTouchScroll && e.pointerId === rTouchScroll.id) {
+        const now = Date.now();
+        const dt = Math.max(1, now - rTouchScroll.lastT);
+        const dy = e.clientY - rTouchScroll.lastY;
+        const dx = e.clientX - rTouchScroll.lastX;
+        rTouchScroll.vy = (dy / dt) * 16;
         const frame = A.$('#readerFrame');
         if (frame && frame.contentWindow) {
           try {
-            frame.contentWindow.scrollBy(
-              rTouchScroll.lastX - e.clientX,
-              rTouchScroll.lastY - e.clientY
-            );
-          } catch (err) { }
+            // scrollTo({behavior:'instant'}) 强制跳过原文的 scroll-behavior:smooth
+            frame.contentWindow.scrollTo({
+              top: Math.max(0, frame.contentWindow.scrollY - dy),
+              left: Math.max(0, frame.contentWindow.scrollX - dx),
+              behavior: 'instant'
+            });
+          } catch (err) {
+            try { frame.contentWindow.scrollBy(-dx, -dy); } catch (err2) { }
+          }
         }
         rTouchScroll.lastX = e.clientX;
         rTouchScroll.lastY = e.clientY;
+        rTouchScroll.lastT = now;
         e.preventDefault();
       }
     });
@@ -542,8 +552,28 @@
         return;
       }
       if (rTouchScroll && e.pointerId === rTouchScroll.id) {
+        // 惯性滚动：手指抬起后按速度衰减
+        const vy = rTouchScroll.vy || 0;
         rTouchScroll = null;
         e.preventDefault();
+        if (Math.abs(vy) > 2) {
+          let v = vy;
+          const decay = () => {
+            v *= 0.94;
+            if (Math.abs(v) < 1) return;
+            try {
+              const frame = A.$('#readerFrame');
+              if (frame && frame.contentWindow) {
+                frame.contentWindow.scrollTo({
+                  top: Math.max(0, frame.contentWindow.scrollY - v),
+                  behavior: 'instant'
+                });
+              }
+            } catch (err) { }
+            requestAnimationFrame(decay);
+          };
+          requestAnimationFrame(decay);
+        }
       }
     });
 
