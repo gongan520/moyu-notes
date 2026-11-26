@@ -427,7 +427,8 @@
       const tags = (book.tags || []).slice(0, 2).map(t => '<span class="tag-mini">' + esc(t) + '</span>').join('');
       meta.innerHTML = '<div class="book-name">' + esc(book.name || '未命名') + '</div>' +
         (tags ? '<div class="book-tags">' + tags + '</div>' : '') +
-        '<div class="book-time">' + A.fmtAgo(book.updatedAt || book.createdAt || Date.now()) + ' · ' + (book.pageCount || 1) + ' 页</div>';
+        '<div class="book-time">' + A.fmtAgo(book.updatedAt || book.createdAt || Date.now()) + ' · ' + (book.pageCount || 1) + ' 页</div>' +
+        '<button class="fn-open-btn">打开</button>';
       card.appendChild(meta);
       frag.appendChild(card);
 
@@ -449,7 +450,13 @@
       if (!id) return;
       let pressTimer = 0, longFired = false;
 
+      const ob = A.$('.fn-open-btn', card);
+      if (ob) ob.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        A.Studio.openBook(id);
+      });
       card.addEventListener('pointerdown', (e) => {
+        if (e.target && e.target.closest('.fn-open-btn')) return;
         longFired = false;
         pressTimer = setTimeout(() => {
           longFired = true;
@@ -1383,5 +1390,5 @@
     });
   }
 
-  A.Library = { init, refresh, paintCover, openBookMenu, S };
+  A.Library = { init, refresh, paintCover, openBookMenu, newFolder, moveBookTo, S };
 })(window.MY);

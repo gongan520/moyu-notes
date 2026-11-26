@@ -130,8 +130,17 @@ img{-webkit-user-drag:none;}
     const inject = [];
     if (!/<meta[^>]+name=["']?viewport/i.test(html)) inject.push(VIEWPORT);
     inject.push('<style id="__moyu_base">' + BASE_CSS + '</style>');
-    // 阅读模式：整篇连续显示，锚点/链接走浏览器原生行为
-    if (opts.reader) inject.push('<script>window.__MOYU_READER__=true;<\/script>');
+    // 阅读模式：整篇连续显示，锚点/链接走浏览器原生行为；目录栏强制可见
+    if (opts.reader) {
+      const READER_CSS = '<style id="__moyu_reader_css">' +
+        '@media(max-width:1080px){' +
+        'html[data-moyu-reader] .rail{display:block!important;position:fixed!important;left:0;top:0;bottom:0;width:270px!important;z-index:9998!important;overflow-y:auto!important;}' +
+        'html[data-moyu-reader] main{margin-left:270px!important;}' +
+        '}' +
+        '</style>';
+      inject.push(READER_CSS);
+      inject.push('<script>document.documentElement.setAttribute("data-moyu-reader","1");window.__MOYU_READER__=true;<\/script>');
+    }
     // 分页偏移：把整份文档往上推，让本页只露出自己的那一段
     if (opts.offsetY && opts.offsetY > 0) {
       inject.push('<style id="__moyu_offset">body{position:relative;top:-' + opts.offsetY + 'px;}</style>');

@@ -19,6 +19,7 @@
     applyThemeEarly();
     A.Library.init();
     A.Studio.init();
+    if (A.FreeNotesUI) A.FreeNotesUI.init();
 
     (async () => {
       try { await A.dbReady; } catch (e) { }

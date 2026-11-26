@@ -135,7 +135,7 @@
       type: 'blank',
       w: p.w, h: p.h,
       preset: p.id,
-      paper: 'lined',
+      paper: 'blank',
       paperColor: '#ffffff',
       layers: defaultLayers(),
       strokes: [],
@@ -150,8 +150,8 @@
     const vh = window.innerHeight || 768;
     // 顶部栏约 60px + 底部工具坞约 100px，纸张填满这两者之间
     const availW = Math.max(600, vw - 8);
-    // 横屏时工具坞更矮，竖屏时更高，据此估算顶部栏+底部工具坞总高
-    const chrome = vw >= vh ? 156 : 165;
+    // 自由笔记式：纸张从胶囊下沿铺到屏幕底部，只留顶部胶囊高度
+    const chrome = 52;
     const availH = Math.max(500, vh - chrome);
     return { id: 'auto', w: Math.round(availW), h: Math.round(availH) };
   }
@@ -203,7 +203,7 @@
     D.viewLib.classList.remove('is-active');
     D.viewStu.classList.add('is-active');
     document.body.classList.add('in-studio');
-    // Notability 式：工具坞默认收起，只留右下角小把手，纸张铺满
+    // 自由笔记式：底部无工具栏；工具都在顶部悬浮胶囊里
     D.dock.classList.add('is-collapsed');
 
     D.docTitle.value = book.name || '未命名';
@@ -218,10 +218,6 @@
       }
       fitPage();   // 空白笔记：整页铺满屏幕
       S.ready = true;
-      const tip = S.pages.length > 1
-        ? '双指缩放 · 两指拖动移动画面 · 两侧箭头翻页'
-        : '双指缩放 · 两指拖动移动画面';
-      setTimeout(() => showHint(tip, 3400), 500);
     });
   }
 
@@ -472,15 +468,74 @@
     const base = (S.pages && S.pages[0]) || S.page;
     rStrokes = (base && base.readerStrokes) || [];
     bindReaderInk();
-    // iframe 滚动时，笔迹（内容坐标）要跟着内容一起走 → 重绘
+  }
+
+  /* 阅读模式笔迹层不拦截指针：touch/鼠标走 iframe 原生滚动与链接，
+     只有 pen 事件在 iframe 文档里被捕获后写到上层 canvas。 */
+  function bindReaderInk() {
     const frame = A.$('#readerFrame');
-    if (frame) {
-      frame.addEventListener('load', () => {
-        try {
-          frame.contentWindow.addEventListener('scroll', () => repaintReaderInk(), { passive: true });
-        } catch (e) { }
-      });
+    if (!frame || frame.__moyuInkBound) return;
+    frame.__moyuInkBound = true;
+    const bindDoc = () => {
+      let doc = null, win = null;
+      try { doc = frame.contentDocument; win = frame.contentWindow; } catch (e) { }
+      if (!doc || doc.__moyuInkBound) return;
+      doc.__moyuInkBound = true;
+      doc.addEventListener('pointerdown', onReaderDocDown, true);
+      doc.addEventListener('pointermove', onReaderDocMove, true);
+      doc.addEventListener('pointerup', onReaderDocUp, true);
+      doc.addEventListener('pointercancel', onReaderDocUp, true);
+      if (win) win.addEventListener('scroll', () => repaintReaderInk(), { passive: true });
+    };
+    frame.addEventListener('load', bindDoc);
+    if (frame.contentDocument && frame.contentDocument.readyState === 'complete') bindDoc();
+  }
+
+  function readerPointFromFrame(e) {
+    const frame = A.$('#readerFrame');
+    if (!frame) return { x: 0, y: 0 };
+    const r = frame.getBoundingClientRect();
+    const off = readerScrollOffset();
+    return { x: e.clientX - r.left, y: e.clientY - r.top + off };
+  }
+
+  function onReaderDocDown(e) {
+    if (!rInk || !readerOpen) return;
+    if (e.pointerType !== 'pen') return;          // 手指/鼠标保留网页原生交互
+    if (e.target && e.target.closest && e.target.closest('.rail,a,button')) return; // 目录/链接可点
+    if (rTool === 'undo') return;
+    const pt = readerPointFromFrame(e);
+    if (rTool === 'eraser') { eraseReaderStrokeAt(pt); e.preventDefault(); return; }
+    rCur = {
+      tool: rTool,
+      color: S.color || '#1c1c1e',
+      size: rTool === 'marker' ? 14 : Math.max(2.5, S.size || 3),
+      pts: [pt]
+    };
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) { }
+    repaintReaderInk();
+    e.preventDefault();
+  }
+
+  function onReaderDocMove(e) {
+    if (!rCur || e.pointerType !== 'pen') return;
+    const pt = readerPointFromFrame(e);
+    if (rCur.tool === 'eraser') eraseReaderStrokeAt(pt);
+    else rCur.pts.push(pt);
+    repaintReaderInk();
+    e.preventDefault();
+  }
+
+  function onReaderDocUp(e) {
+    if (!rCur || e.pointerType !== 'pen') return;
+    if (rCur.tool !== 'eraser') {
+      if (rCur.pts.length === 1) rCur.pts.push({ x: rCur.pts[0].x + 0.1, y: rCur.pts[0].y + 0.1 });
+      rStrokes.push(rCur);
+      saveReaderStrokes();
     }
+    rCur = null;
+    repaintReaderInk();
+    e.preventDefault();
   }
 
   function readerInkSize() {
@@ -548,55 +603,8 @@
     ctx.restore();
   }
 
-  function readerPoint(e) {
-    const r = rInk.getBoundingClientRect();
-    const off = readerScrollOffset();
-    // 笔迹存「内容坐标」：屏幕坐标 + 当前滚动偏移，这样内容滚动时笔迹跟着内容走
-    return { x: e.clientX - r.left, y: e.clientY - r.top + off };
-  }
-
-  function bindReaderInk() {
-    if (!rInk) return;
-    rInk.addEventListener('pointerdown', (e) => {
-      if (rTool === 'undo') return;
-      const pt = readerPoint(e);
-      if (rTool === 'eraser') {
-        // 橡皮：点到哪笔删哪笔（整笔删除）
-        eraseReaderStrokeAt(pt);
-        return;
-      }
-      rCur = {
-        tool: rTool,
-        color: S.color || '#1c1c1e',
-        size: rTool === 'marker' ? 14 : Math.max(2.5, S.size || 3),
-        pts: [pt]
-      };
-      try { rInk.setPointerCapture(e.pointerId); } catch (err) { }
-      repaintReaderInk();
-      e.preventDefault();
-    });
-    rInk.addEventListener('pointermove', (e) => {
-      if (!rCur) return;
-      if (rCur.tool === 'eraser') { eraseReaderStrokeAt(readerPoint(e)); return; }
-      rCur.pts.push(readerPoint(e));
-      repaintReaderInk();
-      e.preventDefault();
-    });
-    rInk.addEventListener('pointerup', (e) => {
-      if (!rCur) return;
-      if (rCur.tool !== 'eraser') {
-        if (rCur.pts.length === 1) {
-          rCur.pts.push({ x: rCur.pts[0].x + 0.1, y: rCur.pts[0].y + 0.1 });
-        }
-        rStrokes.push(rCur);
-        saveReaderStrokes();
-      }
-      rCur = null;
-      repaintReaderInk();
-      e.preventDefault();
-    });
-    rInk.addEventListener('pointercancel', () => { rCur = null; });
-  }
+  /* 原 readerInk 上的指针监听已移除：统一由 iframe 文档转发 pen 事件，
+     避免画布盖住目录链接与正文滚动。 */
 
   // 橡皮整笔删除：命中即删
   function eraseReaderStrokeAt(pt) {
@@ -916,8 +924,8 @@
     if (title) title.textContent = (S.book && S.book.name) || '阅读';
 
     const pw = p.w || 794;
-    // iframe 内部滚动（高度=视口高），这样 HTML 里的 position:fixed 目录栏能固定在左侧不跟着滚
-    const avail = window.innerWidth - 24;
+    // iframe 用真实屏幕宽度，避免原文媒体查询把目录栏隐藏
+    const avail = window.innerWidth;
     readerScale = 1;
     readerStartY = p.sliceTop || 0;
     readerScrolled = false;
@@ -1156,11 +1164,15 @@
   function fitPage() {
     const { w, h } = pageSize();
     const r = stageRect();
-    const pad = 12;   // 减小留白，让纸张尽量铺满屏幕
-    const s = A.clamp(Math.min((r.width - pad * 2) / w, (r.height - pad * 2) / h), 0.15, 3);
+    const fn = !!(A.$('#viewStudio') && A.$('#viewStudio').classList.contains('fn-app'));
+    // 自由笔记式：胶囊悬浮在纸上，纸张从胶囊下沿铺到屏幕底部
+    const padX = fn ? 6 : 12;
+    const padTop = fn ? 54 : 12;
+    const padBottom = fn ? 4 : 12;
+    const s = A.clamp(Math.min((r.width - padX * 2) / w, (r.height - padTop - padBottom) / h), 0.15, 3);
     S.view.scale = s;
     S.view.x = (r.width - w * s) / 2;
-    S.view.y = Math.max(pad, (r.height - h * s) / 2);
+    S.view.y = padTop + Math.max(0, (r.height - padTop - padBottom - h * s) / 2);
     S.view.fit = 'p';
     applyView();
     scheduleQuality();
@@ -1441,13 +1453,17 @@
   }
 
   function isTouchPan(e) {
-    // 手指触屏一律当「平移画面」，只有触控笔(pen)才能写字
-    return e.pointerType === 'touch';
+    // 只有触控笔(pen/可写)写字；touch 与未知指针都只做平移/手势
+    if (e.pointerType === 'pen') return false;
+    if (e.pointerType === 'mouse') return false;   // 桌面调试/外接鼠标
+    return true;
   }
 
   function onPointerDown(e) {
     if (e.button != null && e.button > 0 && e.pointerType === 'mouse') return;
     if (A.sheet.isOpen()) return;
+    // 掌托防误触：笔正在写时，掌根 touch 直接丢弃，不进手势队列
+    if (e.pointerType === 'touch' && (S.drawId != null || S.stroke)) return;
     // 划在按钮/浮动控件上时不要抢事件（pointer capture 会吃掉 click）
     if (e.target && e.target.closest && e.target.closest('button,.page-nav,.ctx-float,.stage-hint')) return;
     const st = D.stage;
@@ -1545,6 +1561,8 @@
   }
 
   function onPointerMove(e) {
+    // 掌根 touch 不参与绘制中的任何状态更新
+    if (e.pointerType === 'touch' && (S.drawId != null || S.stroke)) return;
     if (lpStart && Math.hypot(e.clientX - lpStart.x, e.clientY - lpStart.y) > 8) clearLookupTimer();
     if (S.pointers.has(e.pointerId)) {
       const rec = S.pointers.get(e.pointerId);
@@ -1641,6 +1659,8 @@
   }
 
   function onPointerUp(e) {
+    // 被掌托防误触丢弃的 touch，抬起时也不能影响正在写的笔画
+    if (e.pointerType === 'touch' && !S.pointers.has(e.pointerId) && (S.drawId != null || S.stroke)) return;
     S.pointers.delete(e.pointerId);
     // 长按已经弹了查词，这一下不算笔迹
     if (lpFired) {
@@ -3877,10 +3897,11 @@
 
   A.Studio = {
     init, openBook, closeBook, blankPage, htmlPage, addPage, goPage,
-    exportPdf, exportPng, fitWidth, fitPage, S, createHtmlBook, measureHtml,
+    exportPdf, exportPng, fitWidth, fitPage, zoomAt, S, createHtmlBook, measureHtml,
     openPagesPanel, openPaperPanel, openExportPanel, insertImage, saveNow,
     openLayersPanel, toggleRec, playRec, stopRecPlay, repaintInk,
     ensureLayers, layerOf, drawSelectionBox, visibleStrokes, renderPageToCanvas,
-    deletePage, flashAnchor, speakPage
+    deletePage, movePage, flashAnchor, speakPage,
+    setTool, setColor, setSize, undo, redo, openReader, closeReader
   };
 })(window.MY);
