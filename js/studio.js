@@ -150,8 +150,8 @@
     const vh = window.innerHeight || 768;
     // 顶部栏约 60px + 底部工具坞约 100px，纸张填满这两者之间
     const availW = Math.max(600, vw - 8);
-    // 横屏时工具坞更矮（约 88px），竖屏时更高（约 100px），据此估算
-    const chrome = vw >= vh ? 148 : 160;
+    // 横屏时工具坞更矮，竖屏时更高，据此估算顶部栏+底部工具坞总高
+    const chrome = vw >= vh ? 156 : 165;
     const availH = Math.max(500, vh - chrome);
     return { id: 'auto', w: Math.round(availW), h: Math.round(availH) };
   }
