@@ -310,18 +310,33 @@
     <div class="ctx-float" id="ctxFloat"></div>
   </section>
 
-  <!-- 阅读模式：整篇网页连续显示，链接、锚点、折叠等原生交互全部保留 -->
+  <!-- 阅读模式：整篇网页连续显示，链接、锚点、折叠等原生交互全部保留，可手写批注 -->
   <div class="reader" id="reader" hidden>
     <header class="reader-bar">
       <button class="icon-btn" id="btnReaderClose" title="关闭阅读">
         <svg viewBox="0 0 24 24" class="ico"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
       <div class="reader-title" id="readerTitle">阅读</div>
+      <div class="reader-tools" id="readerTools">
+        <button class="rtool is-on" data-rt="pen" title="笔">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M15.6 3.4l5 5L9 20H4v-5L15.6 3.4z"/><path d="M13.2 5.8l5 5"/></svg>
+        </button>
+        <button class="rtool" data-rt="marker" title="荧光笔">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M8.5 13.5L14 8l5 5-5.5 5.5H8.5v-5z"/><path d="M8.5 18.5H4v-3l4.5-2"/></svg>
+        </button>
+        <button class="rtool" data-rt="eraser" title="橡皮">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4.5 15.5l6-6 7 7-3.5 3.5H8l-3.5-3.5z"/><path d="M10.5 9.5l4-4 6 6-4 4"/></svg>
+        </button>
+        <button class="rtool" data-rt="undo" title="撤销">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M9 7L4 12l5 5"/><path d="M4 12h9a6 6 0 010 12h-2"/></svg>
+        </button>
+      </div>
       <button class="reader-act" id="btnReaderTop">回到顶部</button>
     </header>
     <div class="reader-scroll" id="readerScroll">
       <div class="reader-doc" id="readerDoc">
         <iframe id="readerFrame" title="阅读视图"></iframe>
+        <canvas id="readerInk"></canvas>
       </div>
     </div>
   </div>

@@ -209,18 +209,18 @@
     D.docTitle.value = book.name || '未命名';
     await loadPage(0, true);
     requestAnimationFrame(() => {
-      // HTML 笔记默认直接进「全屏阅读模式」，铺满屏幕（对齐浏览器/Notability 的连续阅读体验）
-      if (book.isHtml) {
-        openReader();
-        S.ready = true;
-        return;
-      }
-      fitPage();   // 整页铺满屏幕（原来只贴宽度，导致上下留大片黑边）
+      // HTML 笔记默认进「编辑模式」：HTML 作为底稿背景铺满，可在上面直接手写批注
+      // （阅读模式改为用户手动点顶栏「阅读」进入，纯看时才用）
+      fitPage();   // 整页铺满屏幕
       S.ready = true;
-      const tip = S.pages.length > 1
-        ? '双指缩放 · 两指拖动移动画面 · 两侧箭头翻页'
-        : '双指缩放 · 两指拖动移动画面';
-      setTimeout(() => showHint(tip, 3400), 500);
+      if (book.isHtml) {
+        showHint('可直接手写批注 · 点顶栏「阅读」切换纯阅读', 3400);
+      } else {
+        const tip = S.pages.length > 1
+          ? '双指缩放 · 两指拖动移动画面 · 两侧箭头翻页'
+          : '双指缩放 · 两指拖动移动画面';
+        setTimeout(() => showHint(tip, 3400), 500);
+      }
     });
   }
 
@@ -454,6 +454,147 @@
   /* ═════════════ 阅读模式 ═════════════ */
 
   let readerOpen = false, readerScale = 1, readerStartY = 0, readerScrolled = false;
+
+  /* ───── 阅读模式手写批注 ───── */
+  let rInk = null, rInkCtx = null, rTool = 'pen';
+  let rStrokes = [];        // 已完成笔迹 [{tool,color,size,pts}]
+  let rCur = null;          // 当前绘制中
+  let rUndoStack = [];
+
+  function initReaderInk() {
+    rInk = A.$('#readerInk');
+    if (!rInk) return;
+    rInkCtx = rInk.getContext('2d');
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    rInk._dpr = dpr;
+    bindReaderInk();
+    // iframe 滚动时，笔迹（内容坐标）要跟着内容一起走 → 重绘
+    const frame = A.$('#readerFrame');
+    if (frame) {
+      frame.addEventListener('load', () => {
+        try {
+          frame.contentWindow.addEventListener('scroll', () => repaintReaderInk(), { passive: true });
+        } catch (e) { }
+      });
+    }
+  }
+
+  function readerInkSize() {
+    const frame = A.$('#readerFrame');
+    if (!rInk || !frame) return;
+    const w = frame.clientWidth, h = frame.clientHeight;
+    const dpr = rInk._dpr || 1;
+    rInk.width = Math.max(1, Math.round(w * dpr));
+    rInk.height = Math.max(1, Math.round(h * dpr));
+    rInk.style.width = w + 'px';
+    rInk.style.height = h + 'px';
+    rInkCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    repaintReaderInk();
+  }
+
+  function readerScrollOffset() {
+    const frame = A.$('#readerFrame');
+    if (!frame || !frame.contentWindow) return 0;
+    try { return frame.contentWindow.scrollY || 0; } catch (e) { return 0; }
+  }
+
+  function repaintReaderInk() {
+    if (!rInkCtx) return;
+    const w = rInk.width / (rInk._dpr || 1), h = rInk.height / (rInk._dpr || 1);
+    const off = readerScrollOffset();
+    rInkCtx.clearRect(0, 0, w, h);
+    rInkCtx.save();
+    rInkCtx.translate(0, -off);   // 笔迹存内容坐标，绘制时减去当前滚动偏移
+    rStrokes.forEach(s => drawReaderStroke(rInkCtx, s));
+    if (rCur) drawReaderStroke(rInkCtx, rCur);
+    rInkCtx.restore();
+  }
+
+  function drawReaderStroke(ctx, s) {
+    const pts = s.pts;
+    if (!pts || pts.length < 1) return;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (s.tool === 'marker') {
+      ctx.globalAlpha = 0.38;
+      ctx.strokeStyle = s.color || '#f2c14e';
+      ctx.lineWidth = (s.size || 14);
+    } else if (s.tool === 'eraser') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+      ctx.lineWidth = (s.size || 24);
+    } else {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = s.color || '#1c1c1e';
+      ctx.lineWidth = (s.size || 3);
+    }
+    if (pts.length === 1) {
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
+      ctx.fillStyle = s.tool === 'eraser' ? 'rgba(0,0,0,1)' : (s.color || '#1c1c1e');
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function readerPoint(e) {
+    const r = rInk.getBoundingClientRect();
+    const off = readerScrollOffset();
+    // 笔迹存「内容坐标」：屏幕坐标 + 当前滚动偏移，这样内容滚动时笔迹跟着内容走
+    return { x: e.clientX - r.left, y: e.clientY - r.top + off };
+  }
+
+  function bindReaderInk() {
+    if (!rInk) return;
+    rInk.addEventListener('pointerdown', (e) => {
+      if (rTool === 'undo') return;
+      const pt = readerPoint(e);
+      rCur = {
+        tool: rTool,
+        color: S.color || '#1c1c1e',
+        size: rTool === 'marker' ? 14 : (rTool === 'eraser' ? 24 : Math.max(2.5, S.size || 3)),
+        pts: [pt]
+      };
+      try { rInk.setPointerCapture(e.pointerId); } catch (err) { }
+      repaintReaderInk();
+      e.preventDefault();
+    });
+    rInk.addEventListener('pointermove', (e) => {
+      if (!rCur) return;
+      rCur.pts.push(readerPoint(e));
+      repaintReaderInk();
+      e.preventDefault();
+    });
+    rInk.addEventListener('pointerup', (e) => {
+      if (!rCur) return;
+      if (rCur.pts.length === 1) {
+        rCur.pts.push({ x: rCur.pts[0].x + 0.1, y: rCur.pts[0].y + 0.1 });
+      }
+      rStrokes.push(rCur);
+      rCur = null;
+      repaintReaderInk();
+      e.preventDefault();
+    });
+    rInk.addEventListener('pointercancel', () => { rCur = null; });
+  }
+
+  function setReaderTool(t) {
+    if (t === 'undo') {
+      rStrokes.pop();
+      repaintReaderInk();
+      return;
+    }
+    rTool = t;
+    A.$$('.rtool').forEach(b => b.classList.toggle('is-on', b.dataset.rt === t));
+  }
+
 
   /* ═════════════ 图层面板 ═════════════ */
 
@@ -739,18 +880,17 @@
     if (title) title.textContent = (S.book && S.book.name) || '阅读';
 
     const pw = p.w || 794;
-    // 让 iframe 的实际宽度 = 屏幕宽度，HTML 的响应式布局（如左目录+右正文）才能按真实 iPad 宽度渲染
-    // 之前用 scale 缩放 1024 宽的 iframe，iframe 内部视口仍是 1024，会触发窄屏单列布局、丢掉目录栏
+    // iframe 内部滚动（高度=视口高），这样 HTML 里的 position:fixed 目录栏能固定在左侧不跟着滚
     const avail = window.innerWidth - 24;
-    readerScale = 1;   // 不缩放，iframe 直接用真实宽度
+    readerScale = 1;
     readerStartY = p.sliceTop || 0;
     readerScrolled = false;
 
     frame.style.width = avail + 'px';
     frame.style.transform = 'none';
     frame.style.transformOrigin = '0 0';
-    frame.style.height = '200px';
-    docBox.style.height = '200px';
+    frame.style.height = '100%';
+    docBox.style.height = '100%';
     docBox.style.width = avail + 'px';
     if (scroll) scroll.scrollTop = 0;
 
@@ -758,6 +898,7 @@
     ov.hidden = false;
     ov.classList.add('is-on');
     frame.srcdoc = A.HtmlPage.prepare(src, { reader: true });
+    initReaderInk();
 
     setTimeout(readerFit, 350);
     setTimeout(readerFit, 1100);
@@ -766,41 +907,29 @@
 
   function readerFit() {
     if (!readerOpen) return;
-    const frame = A.$('#readerFrame'), docBox = A.$('#readerDoc');
-    if (!frame || !docBox) return;
-    let h = 0;
-    try {
-      const d = frame.contentDocument;
-      if (d) {
-        h = Math.max(
-          d.documentElement ? d.documentElement.scrollHeight : 0,
-          d.body ? d.body.scrollHeight : 0
-        );
-      }
-    } catch (e) { }
-    if (!h || h < 40) return;
-    frame.style.height = h + 'px';
-    docBox.style.height = h + 'px';
+    const frame = A.$('#readerFrame');
+    if (!frame) return;
+    readerInkSize();   // 同步 ink 画布尺寸到视口
     if (!readerScrolled) {
       readerScrolled = true;
-      const sc = A.$('#readerScroll');
-      if (sc && readerStartY > 0) {
-        sc.scrollTop = Math.max(0, readerStartY - 8);
+      // iframe 内部滚动：定位到导入时的起始位置
+      if (readerStartY > 0) {
+        try { frame.contentWindow.scrollTo(0, readerStartY); } catch (e) { }
       }
     }
   }
 
-  /** 阅读模式下的锚点：滚动外层容器（iframe 自身高度等于全文，没有内滚动） */
+  /** 阅读模式下的锚点：滚动 iframe 内部 */
   function readerScrollTo(name) {
-    const frame = A.$('#readerFrame'), sc = A.$('#readerScroll');
-    if (!frame || !sc) return;
+    const frame = A.$('#readerFrame');
+    if (!frame) return;
     const doc = frame.contentDocument;
     if (!doc) return;
     let el = null;
     try { el = doc.getElementById(name) || doc.getElementsByName(name)[0] || null; } catch (e) { el = null; }
     if (!el) return;
-    const y = el.getBoundingClientRect().top;   // iframe 未内滚，即文档内偏移
-    sc.scrollTo({ top: Math.max(0, y - 12), behavior: 'smooth' });
+    const y = el.getBoundingClientRect().top + (frame.contentWindow.scrollY || 0);   // 文档内绝对偏移
+    try { frame.contentWindow.scrollTo({ top: Math.max(0, y - 12), behavior: 'smooth' }); } catch (e) { }
   }
 
   function closeReader() {    const ov = A.$('#reader'), frame = A.$('#readerFrame');
@@ -3425,7 +3554,9 @@
     on('#btnRuler', 'click', () => toggleRuler());
     on('#btnPick', 'click', () => setPicking(!S.picking));
     on('#btnReaderClose', 'click', closeReader);
-    on('#btnReaderTop', 'click', () => { const sc = A.$('#readerScroll'); if (sc) sc.scrollTo({ top: 0, behavior: 'smooth' }); });
+    on('#btnReaderTop', 'click', () => { const f = A.$('#readerFrame'); if (f && f.contentWindow) { try { f.contentWindow.scrollTo({ top: 0, behavior: 'smooth' }); } catch (e) { } } });
+    // 阅读模式手写工具
+    A.$$('.rtool').forEach(b => b.addEventListener('click', () => setReaderTool(b.dataset.rt)));
 
     // 阅读视图里的高度回报与外部链接
     window.addEventListener('message', (e) => {
