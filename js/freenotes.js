@@ -412,6 +412,15 @@
       if (A.Studio) A.Studio.setTool(b.dataset.tool);
     }));
 
+    // 彩色笔尖快捷切换
+    A.$$('.fn-pen-tip').forEach(b => b.addEventListener('click', () => {
+      A.$$('.fn-pen-tip').forEach(x => x.classList.toggle('is-on', x === b));
+      if (A.Studio) {
+        A.Studio.setTool('pen');
+        if (b.dataset.color) A.Studio.setColor(b.dataset.color);
+      }
+    }));
+
     // 左边缘右滑呼出文档列表，自由笔记同款
     let sx = 0, sy = 0, tracking = false;
     document.addEventListener('pointerdown', (e) => {

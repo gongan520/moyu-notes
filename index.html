@@ -138,13 +138,13 @@
           <svg viewBox="0 0 24 24" class="ico"><path d="M15 5l-7 7 7 7"/></svg>
         </button>
         <button class="icon-btn" id="btnDrawerToggle" title="文档列表">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M5 4h8l3 3v13H5z"/><path d="M8 10h7M8 14h7M8 18h5"/></svg>
+          <svg viewBox="0 0 24 24" class="ico"><rect x="3" y="4" width="12" height="10" rx="1.5"/><rect x="9" y="10" width="12" height="10" rx="1.5"/></svg>
         </button>
         <button class="icon-btn" id="btnUndo" title="撤销">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M9 7L4 12l5 5"/><path d="M4 12h9a6 6 0 010 12h-2"/></svg>
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4 10h10a5 5 0 010 10h-2"/><path d="M8 6l-4 4 4 4"/></svg>
         </button>
         <button class="icon-btn" id="btnRedo" title="重做">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M15 7l5 5-5 5"/><path d="M20 12h-9a6 6 0 000 12h2"/></svg>
+          <svg viewBox="0 0 24 24" class="ico"><path d="M20 10H10a5 5 0 000 10h2"/><path d="M16 6l4 4-4 4"/></svg>
         </button>
         <button class="icon-btn fn-plus" id="btnPages" title="页面 / 新建页">
           <svg viewBox="0 0 24 24" class="ico"><path d="M12 5v14M5 12h14"/></svg>
@@ -159,30 +159,45 @@
 
       <div class="fn-capsule fn-capsule--right" id="toolRow">
         <button class="tool is-on" data-tool="pen" title="钢笔">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M15.6 3.4l5 5L9 20H4v-5L15.6 3.4z"/><path d="M13.2 5.8l5 5"/></svg>
+          <svg viewBox="0 0 24 24" class="ico"><path d="M15.6 3.4l5 5L9 20H4v-5z" fill="#2f7cf6" stroke="none"/><path d="M13.2 5.8l5 5" stroke="#fff" stroke-width="1.5"/></svg>
           <span>钢笔</span>
         </button>
-        <button class="fn-tool-quick" id="btnPagePanel" title="页面列表">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M4 5.5C4 4.7 4.7 4 5.5 4H10c1.4 0 2.6.7 3.2 1.8L14 7h4.5c.8 0 1.5.7 1.5 1.5v10c0 .8-.7 1.5-1.5 1.5h-13c-.8 0-1.5-.7-1.5-1.5z"/><path d="M12 7v13"/></svg>
-        </button>
         <button class="tool" data-tool="lasso" title="框选">
-          <svg viewBox="0 0 24 24" class="ico"><rect x="4" y="5" width="16" height="14" rx="2" stroke-dasharray="3 2"/><path d="M9 9h6M9 13h6"/></svg>
+          <svg viewBox="0 0 24 24" class="ico"><rect x="4" y="5" width="16" height="14" rx="2" stroke-dasharray="3 2"/></svg>
           <span>选择</span>
         </button>
+        <button class="fn-tool-quick" id="btnPagePanel" title="页面列表">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4 5h7l2 2h7v12H4z"/><path d="M4 5v14h16"/></svg>
+        </button>
         <span class="fn-mini-sep"></span>
-        <button class="tool" data-tool="pen" title="钢笔">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M12 3l5 5-6.5 10.5H5V14z"/><path d="M10.5 16.5L17 10"/><path d="M5 20h14"/></svg>
-          <span>笔尖</span>
+        <button class="tool fn-pen-tip" data-tool="pen" data-color="#1c1c1e" title="黑笔">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M15.6 3.4l5 5L9 20H4v-5z" fill="#1c1c1e" stroke="none"/></svg>
+          <span>黑笔</span>
+        </button>
+        <button class="tool fn-pen-tip" data-tool="pen" data-color="#2f6fc9" title="蓝笔">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M15.6 3.4l5 5L9 20H4v-5z" fill="#2f6fc9" stroke="none"/></svg>
+          <span>蓝笔</span>
+        </button>
+        <button class="tool fn-pen-tip" data-tool="pen" data-color="#b23a2f" title="红笔">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M15.6 3.4l5 5L9 20H4v-5z" fill="#b23a2f" stroke="none"/></svg>
+          <span>红笔</span>
+        </button>
+        <button class="tool fn-pen-tip" data-tool="pen" data-color="#e8a33d" title="橙笔">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M15.6 3.4l5 5L9 20H4v-5z" fill="#e8a33d" stroke="none"/></svg>
+          <span>橙笔</span>
         </button>
         <button class="tool" data-tool="marker" title="荧光笔">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M8.5 13.5L14 8l5 5-5.5 5.5H8.5v-5z"/><path d="M8.5 18.5H4v-3l4.5-2"/></svg>
+          <svg viewBox="0 0 24 24" class="ico"><path d="M8.5 13.5L14 8l5 5-5.5 5.5H8.5z" fill="#f5c451" stroke="#c49a12"/><path d="M8.5 18.5H4v-3l4.5-2" stroke="#c49a12" fill="none"/></svg>
           <span>荧光</span>
         </button>
         <button class="tool" data-tool="eraser" title="橡皮">
-          <svg viewBox="0 0 24 24" class="ico"><path d="M4.5 15.5l6-6 7 7-3.5 3.5H8l-3.5-3.5z"/><path d="M10.5 9.5l4-4 6 6-4 4"/></svg>
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4.5 15.5l6-6 7 7-3.5 3.5H8z" fill="#e8e8ee" stroke="#bbb"/><path d="M10.5 9.5l4-4 6 6-4 4" stroke="#bbb" fill="none"/></svg>
           <span>橡皮</span>
         </button>
-        <button class="tool fn-ai" id="btnAI" title="AI / 学习功能">AI</button>
+        <button class="tool fn-ai" id="btnAI" title="AI / 学习功能">
+          <svg viewBox="0 0 24 24" class="ico"><circle cx="12" cy="12" r="10" fill="#7c5cf6"/><path d="M12 6l1.5 4L18 12l-4.5 2L12 18l-1.5-4L6 12l4.5-2z" fill="#fff"/></svg>
+          <span>AI</span>
+        </button>
       </div>
     </header>
 
