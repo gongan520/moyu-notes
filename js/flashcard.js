@@ -33,6 +33,10 @@
   function schedule(card, grade) {
     // grade: 0 忘了 / 1 困难 / 2 一般 / 3 简单
     const q = grade === 0 ? 2 : (grade === 1 ? 3 : (grade === 2 ? 4 : 5));
+    // 兼容历史遗留字段（早期 makeCards 写的是 n/ef/ivl），统一迁移到 ease/reps/interval
+    if (card.ef != null && card.ease == null) card.ease = card.ef;
+    if (card.ivl != null && card.interval == null) card.interval = card.ivl;
+    if (card.n != null && card.reps == null) card.reps = card.n;
     let ease = card.ease || 2.5;
     let reps = card.reps || 0;
     let interval = card.interval || 0;

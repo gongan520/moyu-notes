@@ -11,10 +11,20 @@
     starOnly: false,
     sort: 'updated',
     q: '',
-    ready: false
+    ready: false,
+    collapsed: new Set()
   };
 
   const ACCENTS = ['#e0b263', '#7fa7f5', '#e08a8a', '#8fd0a8', '#b79cf0', '#e8a06a'];
+
+  /* Notability 式分隔线分组：div_all/div_recent/div_inbox 为内置，用户可新建 custom 分组 */
+  const DIVIDERS = [
+    { id: 'div_all', name: '所有笔记', role: 'all' },
+    { id: 'div_recent', name: '近期笔记', role: 'recent' },
+    { id: 'div_inbox', name: '未归档', role: 'inbox' }
+  ];
+  const LS_COLLAPSED = 'moyu_collapsed_divs';
+  const RECENT_LIMIT = 8;
 
   /* ───── 封面绘制 ───── */
   function rr(g, x, y, w, h, r) {
@@ -144,8 +154,28 @@
     return f === S.folderId;
   }
 
+  /* 分隔线（Divider）本身不是可进入的文件夹，是书架的"总目录" */
+  function isDivider(f) { return !!(f && f.type === 'divider'); }
+  function realFolders() { return S.folders.filter(f => !isDivider(f)); }
+
+  function dividerList() {
+    const order = { all: 0, recent: 1, inbox: 2 };
+    return S.folders.filter(isDivider).sort((a, b) => {
+      const oa = order[a.role] != null ? order[a.role] : 3;
+      const ob = order[b.role] != null ? order[b.role] : 3;
+      if (oa !== ob) return oa - ob;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+  }
+
+  /* 顶层文件夹归属的分组；无标记或分组已被删则回落到「所有笔记」 */
+  function dividerOf(f) {
+    const d = f.dividerId || 'div_all';
+    return S.folders.some(x => x.id === d && isDivider(x)) ? d : 'div_all';
+  }
+
   function subFolders() {
-    return S.folders
+    return realFolders()
       .filter(f => (f.parentId || 'root') === S.folderId)
       .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
   }
@@ -157,6 +187,7 @@
     while (grew) {
       grew = false;
       for (const f of S.folders) {
+        if (isDivider(f)) continue;
         const p = f.parentId || 'root';
         if (ids.has(p) && !ids.has(f.id)) { ids.add(f.id); grew = true; }
       }
@@ -183,14 +214,70 @@
   /* ───── 面包屑 ───── */
   function trail() {
     const out = [];
-    let cur = S.folders.find(f => f.id === S.folderId);
+    let cur = realFolders().find(f => f.id === S.folderId);
     let guard = 0;
     while (cur && guard++ < 20) {
       out.unshift(cur);
-      cur = S.folders.find(f => f.id === (cur.parentId || 'root'));
+      cur = realFolders().find(f => f.id === (cur.parentId || 'root'));
       if (cur && cur.id === S.folderId) break;
     }
     return out;
+  }
+
+  function rootEntry() {
+    return '<button class="side-folder' + (S.folderId === 'root' ? ' is-on' : '') + '" data-fid="root">' +
+      '<span class="dot"></span><span>全部笔记</span><span class="cnt">' + S.books.length + '</span></button>';
+  }
+
+  /* 递归渲染真实文件夹，缩进最多三级（复用原 side-folder 的 ind-1/2/3） */
+  function walkFolders(list, depth, out) {
+    list.forEach(f => {
+      const n = S.books.filter(b => (b.folderId || 'root') === f.id).length;
+      out.push('<button class="side-folder ind-' + Math.min(3, depth) + (S.folderId === f.id ? ' is-on' : '') +
+        '" data-fid="' + f.id + '"><span class="dot"></span><span>' + esc(f.name) + '</span>' +
+        '<span class="cnt">' + n + '</span></button>');
+      walkFolders(realFolders().filter(x => (x.parentId || 'root') === f.id), depth + 1, out);
+    });
+  }
+
+  function noteItem(b) {
+    return '<button class="side-note" data-id="' + b.id + '">' +
+      '<span class="dot"></span><span>' + esc(b.name || '未命名') + '</span>' +
+      '<span class="cnt">' + (b.starred ? '★' : (b.pageCount || 1) + '页') + '</span></button>';
+  }
+
+  function recentChildren() {
+    const list = S.books.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, RECENT_LIMIT);
+    if (!list.length) return '<div class="side-empty">还没有笔记</div>';
+    return list.map(noteItem).join('');
+  }
+
+  function inboxChildren() {
+    const list = S.books.filter(b => (b.folderId || 'root') === 'root');
+    if (!list.length) return '<div class="side-empty">没有未归档的笔记</div>';
+    return list.map(noteItem).join('');
+  }
+
+  function folderChildren(d) {
+    const out = [];
+    if (d.role === 'all') out.push(rootEntry());
+    const top = realFolders().filter(f => (f.parentId || 'root') === 'root' && dividerOf(f) === d.id);
+    walkFolders(top, 1, out);
+    if (d.role === 'custom' && !out.length) out.push('<div class="side-empty">暂无文件夹</div>');
+    return out.join('');
+  }
+
+  function dividerChildren(d) {
+    if (d.role === 'recent') return recentChildren();
+    if (d.role === 'inbox') return inboxChildren();
+    return folderChildren(d);
+  }
+
+  function dividerCount(d) {
+    if (d.role === 'all') return S.books.length;
+    if (d.role === 'recent') return Math.min(RECENT_LIMIT, S.books.length);
+    if (d.role === 'inbox') return S.books.filter(b => (b.folderId || 'root') === 'root').length;
+    return realFolders().filter(f => (f.parentId || 'root') === 'root' && dividerOf(f) === d.id).length;
   }
 
   function renderNav() {
@@ -201,25 +288,59 @@
     const title = A.$('#libTitle');
     if (title) title.textContent = curF ? curF.name : '我';
 
-    // 文件夹按父级递归展开，缩进最多三级，够看清层级
-    let html = '<button class="side-folder' + (S.folderId === 'root' ? ' is-on' : '') + '" data-fid="root">' +
-      '<span class="dot"></span><span>全部笔记</span><span class="cnt">' + S.books.length + '</span></button>';
-    function walk(pid, depth) {
-      S.folders.filter(f => (f.parentId || 'root') === pid).forEach(f => {
-        const n = S.books.filter(b => (b.folderId || 'root') === f.id).length;
-        html += '<button class="side-folder ind-' + Math.min(3, depth) + (S.folderId === f.id ? ' is-on' : '') +
-          '" data-fid="' + f.id + '"><span class="dot"></span><span>' + esc(f.name) + '</span>' +
-          '<span class="cnt">' + n + '</span></button>';
-        walk(f.id, depth + 1);
-      });
-    }
-    walk('root', 1);
+    let html = '';
+    dividerList().forEach(d => {
+      const collapsed = S.collapsed.has(d.id);
+      html += '<button class="side-divider' + (collapsed ? '' : ' is-open') + '" data-div="' + d.id + '">' +
+        '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' +
+        '<span class="dv-dot"></span>' +
+        '<span class="dv-name">' + esc(d.name) + '</span>' +
+        '<span class="dv-cnt">' + dividerCount(d) + '</span></button>';
+      if (!collapsed) html += dividerChildren(d);
+    });
     nav.innerHTML = html;
+
+    // 分组：轻触折叠/展开，长按重命名/删除
+    A.$$('.side-divider', nav).forEach(b => {
+      const id = b.dataset.div;
+      let pT = 0, pMoved = false, pFired = false;
+      b.addEventListener('pointerdown', () => {
+        pMoved = false; pFired = false;
+        clearTimeout(pT);
+        pT = setTimeout(() => {
+          if (pMoved) return;
+          pFired = true;
+          const d = S.folders.find(f => f.id === id);
+          if (d) { if (A.haptic) A.haptic(10); dividerMenu(d); }
+        }, 560);
+      });
+      b.addEventListener('pointermove', () => { pMoved = true; clearTimeout(pT); });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => b.addEventListener(ev, () => clearTimeout(pT)));
+      b.addEventListener('click', (e) => {
+        if (pFired) { e.preventDefault(); e.stopPropagation(); pFired = false; return; }
+        if (S.collapsed.has(id)) S.collapsed.delete(id); else S.collapsed.add(id);
+        persistCollapsed();
+        renderNav();
+      });
+      b.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const d = S.folders.find(f => f.id === id);
+        if (d) dividerMenu(d);
+      });
+    });
+
+    // 文件夹进入
     A.$$('.side-folder', nav).forEach(b => b.addEventListener('click', () => {
       S.folderId = b.dataset.fid;
       S.starOnly = false;
       setNavActive('notes');
       render();
+    }));
+
+    // 分组下的笔记直接打开
+    A.$$('.side-note', nav).forEach(b => b.addEventListener('click', () => {
+      const id = b.dataset.id;
+      if (id && A.Studio) A.Studio.openBook(id);
     }));
   }
 
@@ -492,9 +613,74 @@
   async function newFolder() {
     const name = await promptText('新建文件夹', '文件夹名称', '新文件夹', '创建');
     if (!name) return;
-    await A.db.saveFolder({ id: A.uid('fd'), name, parentId: S.folderId, createdAt: A.now() });
+    await A.db.saveFolder({ id: A.uid('fd'), name, parentId: S.folderId, dividerId: 'div_all', createdAt: A.now() });
     await refresh();
     A.toast('已创建文件夹');
+  }
+
+  async function newDivider() {
+    const name = await promptText('新建分组', '分组名称', '新分组', '创建');
+    if (!name) return;
+    await A.db.saveFolder({ id: A.uid('dv'), name, type: 'divider', role: 'custom', parentId: 'root', createdAt: A.now() });
+    await refresh();
+    A.toast('已创建分组');
+  }
+
+  /* 把顶层文件夹挂到某个分组下（内置 recent/inbox 是自动分组，不可选） */
+  function moveFolderToDivider(f) {
+    const divs = dividerList().filter(d => d.role !== 'recent' && d.role !== 'inbox');
+    const node = A.el('div');
+    node.innerHTML = '<div class="list">' + divs.map(d =>
+      '<button class="list-item" data-div="' + d.id + '"><span class="li-grow">' + esc(d.name) +
+      (dividerOf(f) === d.id ? '<span class="li-sub">当前位置</span>' : '') + '</span></button>'
+    ).join('') + '</div>';
+    A.sheet.open({
+      title: '移动到分组',
+      node,
+      onMount: (body, sheet) => {
+        A.$$('.list-item', body).forEach(b => b.addEventListener('click', async () => {
+          f.dividerId = b.dataset.div;
+          await A.db.saveFolder(f);
+          sheet.close();
+          await refresh();
+          A.toast('已移动');
+        }));
+      }
+    });
+  }
+
+  function dividerMenu(d) {
+    const node = A.el('div');
+    node.innerHTML = '<div class="list">' +
+      '<button class="list-item" data-act="rename"><svg class="ico" viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg><span class="li-grow">重命名分组</span></button>' +
+      (d.role === 'custom' ? '<button class="list-item is-danger" data-act="del"><svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/></svg><span class="li-grow">删除分组</span></button>' : '') +
+      '</div>';
+    A.sheet.open({
+      title: esc(d.name),
+      node,
+      onMount: (body, sheet) => {
+        A.$$('.list-item', body).forEach(b => b.addEventListener('click', async () => {
+          const act = b.dataset.act;
+          sheet.close();
+          if (act === 'rename') {
+            const name = await promptText('重命名分组', '分组名称', d.name);
+            if (!name) return;
+            d.name = name;
+            await A.db.saveFolder(d);
+            await refresh();
+          } else if (act === 'del') {
+            for (const f of realFolders().filter(x => (x.parentId || 'root') === 'root' && dividerOf(x) === d.id)) {
+              f.dividerId = 'div_all';
+              await A.db.saveFolder(f);
+            }
+            await A.db.deleteFolder(d.id);
+            if (S.collapsed.has(d.id)) S.collapsed.delete(d.id);
+            await refresh();
+            A.toast('分组已删除');
+          }
+        }));
+      }
+    });
   }
 
   function confirmAction(title, sub, okText) {
@@ -518,9 +704,11 @@
   }
 
   function folderMenu(f) {
+    const isTop = (f.parentId || 'root') === 'root';
     const node = A.el('div');
     node.innerHTML = '<div class="list">' +
       '<button class="list-item" data-act="rename"><svg class="ico" viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg><span class="li-grow">重命名</span></button>' +
+      (isTop ? '<button class="list-item" data-act="group"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span class="li-grow">移动到分组</span></button>' : '') +
       '<button class="list-item is-danger" data-act="del"><svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6 7l1 13h10l1-13"/></svg><span class="li-grow">删除文件夹<span class="li-sub">里面的笔记会退回上一级</span></span></button>' +
       '</div>';
     A.sheet.open({
@@ -536,6 +724,8 @@
             f.name = name;
             await A.db.saveFolder(f);
             await refresh();
+          } else if (act === 'group') {
+            setTimeout(() => moveFolderToDivider(f), 220);
           } else if (act === 'del') {
             const nBooks = S.books.filter(x => (x.folderId || 'root') === f.id).length;
             const okDel = await confirmAction(
@@ -563,7 +753,7 @@
   }
 
   async function moveBookTo(book) {
-    const options = [{ id: 'root', name: '全部笔记' }].concat(S.folders.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh')));
+    const options = [{ id: 'root', name: '全部笔记' }].concat(realFolders().slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh')));
     const node = A.el('div');
     node.innerHTML = '<div class="list">' + options.map(f =>
       '<button class="list-item" data-fid="' + f.id + '"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5A1.5 1.5 0 015 6h4.2l1.6 2h8.2a1.5 1.5 0 011.5 1.5v8A1.5 1.5 0 0119 19H5a1.5 1.5 0 01-1.5-1.5v-10z"/></svg><span class="li-grow">' +
@@ -766,6 +956,31 @@
   }
 
   /* ───── 刷新 ───── */
+  /* 首次启动时补种内置分组（所有笔记/近期笔记/未归档） */
+  async function ensureDividers() {
+    let changed = false;
+    for (const d of DIVIDERS) {
+      if (!S.folders.some(f => f.id === d.id && isDivider(f))) {
+        await A.db.saveFolder({ id: d.id, name: d.name, type: 'divider', role: d.role, parentId: 'root', createdAt: A.now() });
+        changed = true;
+      }
+    }
+    if (changed) {
+      try { S.folders = await A.db.allFolders(); } catch (e) { }
+    }
+  }
+
+  function persistCollapsed() {
+    try { localStorage.setItem(LS_COLLAPSED, JSON.stringify(Array.from(S.collapsed))); } catch (e) { }
+  }
+
+  function loadCollapsed() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LS_COLLAPSED) || '[]');
+      if (Array.isArray(raw)) raw.forEach(x => S.collapsed.add(x));
+    } catch (e) { }
+  }
+
   async function refresh() {
     await A.dbReady;
     const list = await A.db.allBooks();
@@ -776,7 +991,8 @@
     }
     S.books = list;
     try { S.folders = await A.db.allFolders(); } catch (e) { S.folders = []; }
-    if (S.folderId !== 'root' && !S.folders.some(f => f.id === S.folderId)) S.folderId = 'root';
+    await ensureDividers();
+    if (S.folderId !== 'root' && !realFolders().some(f => f.id === S.folderId)) S.folderId = 'root';
     if (A.backup) A.backup.writeMeta(list);
     render();
     updateFoot();
@@ -937,7 +1153,8 @@
       { a: 'blank', t: '空白笔记', s: 'A4 横线纸，直接开始写', i: 'M12 5v14M5 12h14' },
       { a: 'tpl', t: '从模板开始', s: '康奈尔 / 会议 / 读书 / 周计划…', i: 'M4 3h16v18H4z M8 8h8M8 12h8' },
       { a: 'import', t: '导入文件', s: 'HTML / PDF / Markdown / 图片，自动识别', i: 'M12 16V4m0 12l-4-4m4 4l4-4' },
-      { a: 'folder', t: '新建文件夹', s: '整理当前书架', i: 'M3.5 7.5h17v10h-17z' }
+      { a: 'folder', t: '新建文件夹', s: '整理当前书架', i: 'M3.5 7.5h17v10h-17z' },
+      { a: 'divider', t: '新建分组', s: 'Notability 式分隔线分组', i: 'M4 6h16M4 12h16M4 18h10' }
     ];
     node.innerHTML = '<div class="list">' + items.map(x =>
       '<button class="list-item" data-a="' + x.a + '"><svg class="ico" viewBox="0 0 24 24"><path d="' + x.i + '"/></svg>' +
@@ -953,6 +1170,7 @@
           else if (a === 'tpl') openTemplates();
           else if (a === 'import') { const inp = A.$('#fileAny'); if (inp) inp.click(); }
           else if (a === 'folder') newFolder();
+          else if (a === 'divider') newDivider();
         }, 180);
       }));
     } });
@@ -1052,6 +1270,7 @@
   function init() {
     const bind = (sel, fn) => { const n = A.$(sel); if (n) n.addEventListener('click', fn); };
     applyTheme(themeMode);
+    loadCollapsed();
     bindNewButton();
     bind('#btnShelfMore', newSheet);
     // 收藏筛选（原先是导航里的 chip，现在收进侧栏"笔记"再点一次）
@@ -1062,6 +1281,7 @@
     bind('#btnThemeMode', cycleTheme);
     bind('#btnHelp', help);
     bind('#btnNewFolderSide', newFolder);
+    bind('#btnNewDivider', newDivider);
     bind('#btnSettings', () => {
       // 设置：目前汇聚帮助、主题、朗读语速等入口，先给一个简明说明
       A.toast('设置：主题、朗读语速可在编辑页顶部调节');

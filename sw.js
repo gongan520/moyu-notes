@@ -1,5 +1,5 @@
 /* 墨屿 — service worker（离线可用） */
-const CACHE = 'moyu-v7';
+const CACHE = 'moyu-v8';
 const ASSETS = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const ASSETS = [
   './js/search.js',
   './js/outline.js',
   './js/flashcard.js',
+  './js/learn.js',
   './js/backup.js',
   './js/record.js',
   './js/pdfimport.js',

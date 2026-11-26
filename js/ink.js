@@ -257,6 +257,106 @@
     ctx.closePath();
   }
 
+  /* ───── 形状识别（perfect shape）───── */
+  /* 用 RDP 抽稀折点：eps 越大越激进 */
+  function rdpSimplify(pts, eps) {
+    const n = pts.length;
+    if (n < 3) return pts.slice();
+    const a = pts[0], b = pts[n - 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy || 1;
+    let idx = -1, maxD = eps;
+    for (let i = 1; i < n - 1; i++) {
+      const t = ((pts[i].x - a.x) * dx + (pts[i].y - a.y) * dy) / len2;
+      const qx = a.x + dx * t, qy = a.y + dy * t;
+      const d = Math.hypot(pts[i].x - qx, pts[i].y - qy);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (idx < 0) return [a, b];
+    const left = rdpSimplify(pts.slice(0, idx + 1), eps);
+    const right = rdpSimplify(pts.slice(idx), eps);
+    return left.slice(0, -1).concat(right);
+  }
+
+  function polygonArea(pts) {
+    let s = 0;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      s += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+    }
+    return s / 2;
+  }
+
+  /* 保守识别：只在置信度高时返回 { shape, pts }，否则 null。
+     判定顺序：直线 → 矩形 → 椭圆。 */
+  function recognizeShape(s) {
+    const pts = s.pts;
+    const n = pts.length;
+    if (n < 3) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const p = pts[i];
+      if (p.x < x0) x0 = p.x;
+      if (p.y < y0) y0 = p.y;
+      if (p.x > x1) x1 = p.x;
+      if (p.y > y1) y1 = p.y;
+    }
+    const w = x1 - x0, h = y1 - y0;
+    const diag = Math.hypot(w, h);
+    if (diag < 22) return null;
+    const a = pts[0], b = pts[n - 1];
+    const startEnd = Math.hypot(b.x - a.x, b.y - a.y);
+    let path = 0;
+    for (let i = 1; i < n; i++) path += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    const aspect = Math.max(w, h) / Math.max(1, Math.min(w, h));
+
+    // ── 直线：长宽比大、首尾跨度接近对角线、路径不绕弯、偏离弦线小 ──
+    if (aspect > 4 && startEnd / diag > 0.8 && path / diag < 1.5 && diag >= 35) {
+      const dx = b.x - a.x, dy = b.y - a.y, len2 = startEnd * startEnd || 1;
+      let maxDev = 0;
+      for (let i = 0; i < n; i++) {
+        const t = ((pts[i].x - a.x) * dx + (pts[i].y - a.y) * dy) / len2;
+        const qx = a.x + dx * t, qy = a.y + dy * t;
+        const d = Math.hypot(pts[i].x - qx, pts[i].y - qy);
+        if (d > maxDev) maxDev = d;
+      }
+      if (maxDev / diag < 0.09) {
+        return { shape: 'line', pts: [{ x: a.x, y: a.y }, { x: b.x, y: b.y }] };
+      }
+    }
+
+    // ── 矩形：近似闭合 + RDP 抽到 4 个拐角 + 拐角对齐包围盒四角 ──
+    if (diag >= 30 && startEnd / diag < 0.3) {
+      const poly = rdpSimplify(pts, Math.max(5, diag * 0.045));
+      const P = [];
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i];
+        if (!P.length || Math.hypot(p.x - P[P.length - 1].x, p.y - P[P.length - 1].y) > Math.max(5, diag * 0.03)) P.push(p);
+      }
+      if (P.length >= 2 && Math.hypot(P[0].x - P[P.length - 1].x, P[0].y - P[P.length - 1].y) < Math.max(6, diag * 0.05)) P.pop();
+      if (P.length === 4) {
+        const tol = diag * 0.15;
+        const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        let ok = true;
+        for (let c = 0; c < 4 && ok; c++) {
+          let best = Infinity;
+          for (let p = 0; p < P.length; p++) best = Math.min(best, Math.hypot(P[p].x - corners[c][0], P[p].y - corners[c][1]));
+          if (best > tol) ok = false;
+        }
+        if (ok) return { shape: 'rect', pts: [{ x: x0, y: y0 }, { x: x1, y: y1 }] };
+      }
+    }
+
+    // ── 椭圆：近似闭合、绕了一圈、包围盒填充率接近 π/4、长宽比不极端 ──
+    if (n >= 8 && diag >= 24 && startEnd / diag < 0.25 && aspect < 4 && path / diag >= 1.8) {
+      const fill = Math.abs(polygonArea(pts)) / (w * h);
+      if (fill > 0.58 && fill < 0.90) {
+        return { shape: 'ellipse', pts: [{ x: x0, y: y0 }, { x: x1, y: y1 }] };
+      }
+    }
+
+    return null;
+  }
+
   /* ───── 单笔绘制（完整） ───── */
   /* 形状的外形折线：包围盒与命中都按真实轮廓算，不能只算两个定义点 */
   function shapeOutline(s) {
@@ -281,6 +381,8 @@
   }
 
   function drawStroke(ctx, s) {
+    // 胶带被点按「揭开」后不绘制，露出下方内容；再点一次恢复绘制
+    if (s.tool === 'tape' && s.hidden) return;
     if (s.tool === 'shape') {
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
@@ -294,6 +396,16 @@
     const pts = s._sm || (s._sm = densify(smoothPressure(s.pts), SAMPLE_STEP));
     if (!pts.length) return;
     ctx.save();
+    if (s.tool === 'tape') {
+      // 胶带：不透明遮挡条，颜色取纸底色，等宽圆角一笔成型
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = s.color;
+      ctx.strokeStyle = s.color;
+      fillRibbon(ctx, pts, s.size, 'ball', 1);
+      ctx.restore();
+      return;
+    }
     if (s.tool === 'eraser') {
       ctx.globalCompositeOperation = 'destination-out';
       ctx.globalAlpha = 1;
@@ -447,6 +559,7 @@
   A.Ink = {
     densify, smoothPressure, drawStroke, drawAll, drawPartial,
     addPoint, bboxOf, strokeHit, strokeInPoly, strokeInRect, pointInPoly, fillRibbon, drawShape, shapeOutline,
+    recognizeShape, rdpSimplify, polygonArea,
     SAMPLE_STEP
   };
 })(window.MY);

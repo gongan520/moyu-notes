@@ -246,7 +246,9 @@
           const defs = (m.definitions || []).slice(0, 2).map(d => d.definition);
           if (defs.length) meanings.push('<b>' + esc(m.partOfSpeech) + '</b> ' + defs.map(esc).join('；'));
         });
-        const ph = (e.phonetic || (e.phonetics && e.phonetics[0] && e.phonetics[0].text)) || '';
+        // dictionaryapi.dev 的 phonetic 可能自带首尾斜杠，统一剥离，显示层再包一层
+        let ph = (e.phonetic || (e.phonetics && e.phonetics[0] && e.phonetics[0].text)) || '';
+        ph = ph.replace(/^\/|\/$/g, '');
         cb({
           phonetic: ph,
           html: meanings.slice(0, 3).join('<br>')
@@ -532,7 +534,7 @@
         id: A.uid ? A.uid('fc') : 'fc_' + Math.random().toString(36).slice(2, 8),
         q: x.w,
         a: x.note || '',
-        due: 0, n: 0, ef: 2.5, ivl: 0,
+        due: 0, ease: 2.5, reps: 0, interval: 0,
         from: '生词本'
       });
       n++;

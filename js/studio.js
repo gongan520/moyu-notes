@@ -62,6 +62,7 @@
     htmlVisible: true,
     ruler: { on: false, y: 260, angle: 0 },
     picking: false,
+    tapTape: null,        // 胶带点按判定：{ id, s, pt, moved }
     playT: null,          // 录音回放进度；null 表示正常显示全部笔迹
     selScale: null,       // 选区缩放状态
     layer: 0,             // 当前作图图层
@@ -81,6 +82,7 @@
     D.paperCv = A.$('#paperCanvas');
     D.baseCv = A.$('#inkBase');
     D.liveCv = A.$('#inkLive');
+    D.laserCv = A.$('#laserCv');
     D.htmlWrap = A.$('#htmlWrap');
     D.frame = A.$('#htmlFrame');
     D.selSvg = A.$('#selSvg');
@@ -800,7 +802,7 @@
     S.quality = q;
     D.pageEl.style.width = w + 'px';
     D.pageEl.style.height = h + 'px';
-    [D.paperCv, D.baseCv, D.liveCv].forEach(cv => {
+    [D.paperCv, D.baseCv, D.liveCv, D.laserCv].forEach(cv => {
       cv.width = Math.max(1, Math.round(w * q));
       cv.height = Math.max(1, Math.round(h * q));
       cv.style.width = w + 'px';
@@ -1016,10 +1018,11 @@
   /* ═════════════ 工具与属性 ═════════════ */
 
   function setTool(t) {
-    if (t === S.tool && t !== 'image' && t !== 'text') {
+    if (t === S.tool && t !== 'image' && t !== 'text' && t !== 'laser') {
       // 套索：再点一次在「自由 / 矩形」间切换（Notability 同款操作）
       if (t === 'lasso') {
         S.lassoMode = S.lassoMode === 'freeform' ? 'rect' : 'freeform';
+        cancelSelection();   // 清掉旧选区，避免切换后起始点落在旧框内误触发移动
         const btn = A.$$('.tool[data-tool="lasso"] span', D.toolRow)[0];
         if (btn) btn.textContent = S.lassoMode === 'rect' ? '矩形框选' : '套索';
         showHint(S.lassoMode === 'rect' ? '矩形套索：拖出方框选中内容' : '自由套索：随手圈选内容');
@@ -1048,6 +1051,9 @@
     }
     if (t === 'text') {
       showHint('点击页面任意位置放置文字');
+    }
+    if (t === 'tape') {
+      showHint('胶带：拖动画出遮挡 · 点一下揭开 · 再点盖回');
     }
     syncToolUI();
   }
@@ -1219,7 +1225,7 @@
     if (!p) return;
     const hasWords = Array.isArray(p.pdfWords) && p.pdfWords.length;
     if (!hasWords && p.type !== 'html') return;
-    if (S.tool === 'shape' || S.tool === 'text' || S.tool === 'hand') return;
+    if (S.tool === 'shape' || S.tool === 'text' || S.tool === 'hand' || S.tool === 'tape' || S.tool === 'laser') return;
     lpFired = false;
     lpStart = { x: e.clientX, y: e.clientY, pt: pt, cx: e.clientX, cy: e.clientY };
     clearTimeout(lpTimer);
@@ -1317,9 +1323,15 @@
       startLasso(pt);
     } else if (t === 'shape') {
       startShape(pt);
+    } else if (t === 'laser') {
+      startLaser(pt);
     } else if (t === 'text') {
       addTextBox(pt);
       S.mode = null;
+    } else if (t === 'tape') {
+      // 胶带：先记录按下点，拖动才画遮挡；原地抬起则是点按显隐
+      S.mode = 'tapePending';
+      S.tapTape = { id: e.pointerId, s: hitTapeAt(pt), pt: pt, moved: false };
     } else {
       startStroke(pt, e.pressure);
     }
@@ -1371,6 +1383,19 @@
 
     if (S.drawId !== e.pointerId) return;
 
+    if (S.mode === 'tapePending' && S.tapTape && S.tapTape.id === e.pointerId) {
+      const pt = toPage(e.clientX, e.clientY);
+      const tt = S.tapTape;
+      if (Math.hypot(pt.x - tt.pt.x, pt.y - tt.pt.y) > 4) {
+        // 移动超过阈值 → 转为画新胶带，从按下点起笔
+        tt.moved = true;
+        startStroke(tt.pt, e.pressure, 'tape');
+        appendPoint(S.stroke, pt, e.pressure);
+        paintLive(S.stroke);
+      }
+      return;
+    }
+
     if (S.mode === 'draw' && S.stroke) {
       const pt = toPage(e.clientX, e.clientY);
       // 预测点只用来"提前画"，但它会落进笔迹数据，收笔时多出一小段甩尾尖刺
@@ -1389,6 +1414,12 @@
       const pt = toPage(e.clientX, e.clientY);
       S.lassoPts.push(pt);
       drawLasso();
+      return;
+    }
+
+    if (S.mode === 'laser') {
+      const pt = toPage(e.clientX, e.clientY);
+      moveLaser(pt);
       return;
     }
 
@@ -1453,6 +1484,21 @@
       return;
     }
 
+    // 胶带原地抬起（没拖）→ 切换显隐
+    if (S.mode === 'tapePending') {
+      const tt = S.tapTape;
+      S.tapTape = null;
+      if (tt && !tt.moved && tt.s) {
+        tt.s.hidden = !tt.s.hidden;
+        repaintInk();
+        markDirty();
+        if (A.haptic) A.haptic(6);
+      }
+      S.mode = null;
+      S.drawId = null;
+      return;
+    }
+
     if (S.drawId !== e.pointerId) { S.mode = null; return; }
 
     if (S.mode === 'draw' && S.stroke) {
@@ -1467,6 +1513,8 @@
       S.mode = null;
     } else if (S.mode === 'lasso') {
       finishLasso();
+    } else if (S.mode === 'laser') {
+      finishLaser();
     } else if (S.mode === 'shape' && S.stroke) {
       finishShape();
     }
@@ -1478,6 +1526,8 @@
     S.pointers.delete(e.pointerId);
     if (S.gesture) { S.gesture = null; S.twoFinger = null; return; }
     if (S.stroke && S.mode === 'shape') { S.stroke = null; clearLive(); }
+    if (S.mode === 'laser') finishLaser();
+    S.tapTape = null;
     S.mode = null; S.drawId = null;
   }
 
@@ -1516,6 +1566,92 @@
 
   /* ═════════════ 书写 ═════════════ */
 
+  /* ───────────── 激光笔（临时指示，不落墨、不进撤销） ───────────── */
+  let laserPts = null;   // 当前激光轨迹点（页面坐标）
+  let laserFadeT = 0;    // 淡出定时器
+
+  function clearLaserCanvas() {
+    const cv = D.laserCv;
+    if (!cv) return;
+    const g = cv.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.setTransform(S.quality, 0, 0, S.quality, 0, 0);
+  }
+
+  function resetLaserFade() {
+    clearTimeout(laserFadeT);
+    laserFadeT = 0;
+    if (D.laserCv) {
+      D.laserCv.style.transition = 'none';
+      D.laserCv.style.opacity = '1';
+    }
+  }
+
+  function paintLaser(pts) {
+    const cv = D.laserCv;
+    if (!cv) return;
+    clearLaserCanvas();
+    if (!pts || !pts.length) return;
+    const g = cv.getContext('2d');
+    g.save();
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    if (pts.length === 1) {
+      const p = pts[0];
+      g.beginPath(); g.arc(p.x, p.y, 9, 0, Math.PI * 2);
+      g.fillStyle = 'rgba(255,60,60,.32)'; g.fill();
+      g.beginPath(); g.arc(p.x, p.y, 3.2, 0, Math.PI * 2);
+      g.fillStyle = 'rgba(255,140,140,.95)'; g.fill();
+      g.restore();
+      return;
+    }
+    g.beginPath();
+    g.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+    // 外圈光晕
+    g.strokeStyle = 'rgba(255,60,60,.28)';
+    g.lineWidth = 15;
+    g.shadowColor = 'rgba(255,45,45,.9)';
+    g.shadowBlur = 18;
+    g.stroke();
+    g.shadowBlur = 0;
+    // 高亮亮核
+    g.strokeStyle = 'rgba(255,140,140,.95)';
+    g.lineWidth = 4.5;
+    g.stroke();
+    g.restore();
+  }
+
+  function startLaser(pt) {
+    resetLaserFade();
+    laserPts = [{ x: pt.x, y: pt.y }];
+    S.mode = 'laser';
+    paintLaser(laserPts);
+  }
+
+  function moveLaser(pt) {
+    if (!laserPts) return;
+    laserPts.push({ x: pt.x, y: pt.y });
+    paintLaser(laserPts);
+  }
+
+  function finishLaser() {
+    if (!laserPts) return;
+    laserPts = null;
+    const cv = D.laserCv;
+    if (cv) {
+      cv.style.transition = 'opacity 1.9s ease-out';
+      cv.style.opacity = '0';
+    }
+    clearTimeout(laserFadeT);
+    laserFadeT = setTimeout(() => {
+      clearLaserCanvas();
+      if (D.laserCv) { D.laserCv.style.transition = 'none'; D.laserCv.style.opacity = '1'; }
+      laserFadeT = 0;
+    }, 2050);
+  }
+
   function startStroke(pt, pressure, forceTool) {
     const tool = forceTool || (S.tool === 'marker' ? 'marker' : (S.tool === 'pen' && S.kind === 'pencil' ? 'pencil' : 'pen'));
     const q = S.ruler.on ? snapToRuler(pt) : pt;
@@ -1536,8 +1672,8 @@
       id: A.uid('sk'),
       tool: tool,
       kind: tool === 'pen' ? S.kind : (tool === 'pencil' ? 'pencil' : 'ball'),
-      color: tool === 'eraser' ? '#000' : S.color,
-      size: S.size,
+      color: tool === 'eraser' ? '#000' : (tool === 'tape' ? tapeColor() : S.color),
+      size: tool === 'tape' ? Math.max(6, S.size) : S.size,
       layer: (cur && cur.id) || 'l0',
       pts: [{ x: q.x, y: q.y, p: pressure || 0.5 }],
       _committed: 0,
@@ -1731,12 +1867,38 @@
     if (!s) return;
     S.stroke = null;
     clearLive();
-    const bg = D.baseCv.getContext('2d');
     if (s.pts.length < 2 && s.tool !== 'eraser') {
       // 单点 → 画一个点
       s.pts.push({ x: s.pts[0].x + 0.01, y: s.pts[0].y + 0.01, p: s.pts[0].p });
       s._sm = null;
     }
+
+    // 形状识别（perfect shape）：仅钢笔、未开标尺时尝试，识别保守
+    if (s.tool === 'pen' && !S.ruler.on) {
+      const rec = A.Ink.recognizeShape(s);
+      if (rec) {
+        const shape = {
+          id: s.id,
+          tool: 'shape',
+          shape: rec.shape,
+          color: s.color,
+          size: Math.max(1.5, s.size),
+          layer: s.layer || 'l0',
+          pts: rec.pts.map(p => ({ x: p.x, y: p.y, p: 0.5 }))
+        };
+        S.page.strokes.push(shape);
+        pushUndo({ t: 'shapeify', raw: s, shape: shape });
+        repaintInk();
+        markDirty();
+        addStrokeCount();
+        const label = rec.shape === 'line' ? '直线' : (rec.shape === 'rect' ? '矩形' : '椭圆');
+        A.toast('已识别为' + label + ' · 撤销可还原手写');
+        if (A.haptic) A.haptic(6);
+        return;
+      }
+    }
+
+    const bg = D.baseCv.getContext('2d');
     if (s.tool === 'pen') {
       const sm = (s._sm || (s._sm = A.Ink.densify(A.Ink.smoothPressure(s.pts))));
       bg.save();
@@ -1791,6 +1953,22 @@
       pushUndo({ t: 'del', items: S.erased.slice() });
       S.erased = [];
     }
+  }
+
+  /* ───────────── 胶带（背诵遮挡） ───────────── */
+  function tapeColor() {
+    return (S.page && S.page.paperColor) || '#ffffff';
+  }
+
+  /* 命中最上层胶带（含已揭开的，揭开状态仍要能点回盖住） */
+  function hitTapeAt(pt) {
+    const list = (S.page && S.page.strokes) || [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const s = list[i];
+      if (s.tool !== 'tape') continue;
+      if (A.Ink.strokeHit(s, pt.x, pt.y, 6)) return s;
+    }
+    return null;
   }
 
   /* ───────────── 形状 ───────────── */
@@ -2521,6 +2699,15 @@
       } else {
         list.push(op.stroke);
       }
+    } else if (op.t === 'shapeify') {
+      // 形状识别：撤销时把规整形状还原成原始手写，重做时再换回形状
+      if (reverse) {
+        const i = list.indexOf(op.shape);
+        if (i >= 0) list.splice(i, 1, op.raw);
+      } else {
+        const i = list.indexOf(op.raw);
+        if (i >= 0) list.splice(i, 1, op.shape);
+      }
     } else if (op.t === 'addmany') {
       if (reverse) {
         op.strokes.forEach(s => {
@@ -2665,6 +2852,8 @@
     // 录音时间戳与图层归属必须一起存下来，否则重开就丢了
     if (s.t != null) o.t = s.t;
     if (s.layer != null) o.layer = s.layer;
+    // 胶带被「揭开」的显隐状态也要落盘，重开笔记后保持原样
+    if (s.hidden) o.hidden = true;
     return o;
   }
 
@@ -2961,6 +3150,7 @@
       '<button class="list-item" data-a="pdf"><svg class="ico" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z"/><path d="M14 3v5h5"/></svg><span class="li-grow">导入 PDF 批注<span class="li-sub">新建一本 PDF 笔记</span></span></button>' +
       '<button class="list-item" data-a="outline"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h3M4 12h3M4 18h3"/><path d="M10 6h10M10 12h7M10 18h9"/></svg><span class="li-grow">大纲 / 脑图<span class="li-sub">按页面内容自动生成</span></span></button>' +
       '<button class="list-item" data-a="flash"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="M17 9h4v9a2 2 0 01-2 2h-2"/><path d="M8 12h4"/></svg><span class="li-grow">闪卡复习<span class="li-sub">间隔重复排程</span></span></button>' +
+      '<button class="list-item" data-a="learn"><svg class="ico" viewBox="0 0 24 24"><path d="M9 4l7 7-7 7"/><path d="M4 4h3M4 20h3"/></svg><span class="li-grow">学习测验<span class="li-sub">填空 / 选择 / 配对</span></span></button>' +
       '<button class="list-item" data-a="layers"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg><span class="li-grow">图层<span class="li-sub">分层画、分别隐藏</span></span></button>' +
       '<button class="list-item" data-a="rename"><svg class="ico" viewBox="0 0 24 24"><path d="M4 20h4l10-10-4-4L4 16v4z"/><path d="M14 6l4 4"/></svg><span class="li-grow">重命名笔记</span></button>' +
       '<button class="list-item" data-a="fit"><svg class="ico" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span class="li-grow">切换到适应整页</span></button>' +
@@ -2980,6 +3170,7 @@
           if (a === 'pdf') setTimeout(() => A.PdfImport && A.PdfImport.pick(), 200);
           if (a === 'outline') setTimeout(() => A.Outline && A.Outline.open('outline'), 200);
           if (a === 'flash') setTimeout(() => A.Flashcard && A.Flashcard.open(), 200);
+          if (a === 'learn') setTimeout(() => A.Learn && A.Learn.open(), 200);
           if (a === 'layers') setTimeout(openLayersPanel, 200);
           if (a === 'rename') setTimeout(() => { D.docTitle.focus(); D.docTitle.select(); }, 200);
           if (a === 'help') setTimeout(() => { A.$('#footHelp') && A.$('#footHelp').click(); }, 200);
