@@ -2140,7 +2140,6 @@
   const TEXT_FONTS = [
     { id: 'system', name: '系统黑体', cls: '' },
     { id: 'wenkai', name: '手写楷体', cls: 'font-wenkai' },
-    { id: 'wenkaigb', name: '国标楷体', cls: 'font-wenkaigb' },
     { id: 'song', name: '宋体', cls: 'font-song' },
     { id: 'shr', name: '思源宋体', cls: 'font-shr' },
     { id: 'shr-b', name: '思源宋体 粗', cls: 'font-shr-b' },
@@ -2148,8 +2147,6 @@
     { id: 'shs', name: '思源黑体', cls: 'font-shs' },
     { id: 'shs-b', name: '思源黑体 粗', cls: 'font-shs-b' },
     { id: 'shs-l', name: '思源黑体 细', cls: 'font-shs-l' },
-    { id: 'shr-vf', name: '思源宋体 VF', cls: 'font-shr-vf' },
-    { id: 'shs-vf', name: '思源黑体 VF', cls: 'font-shs-vf' },
     { id: 'kai', name: '楷体', cls: 'font-kai' },
     { id: 'yuan', name: '圆体', cls: 'font-yuan' },
     { id: 'round', name: '丸体', cls: 'font-round' }
@@ -3000,8 +2997,14 @@
       const fam = {
         system: '-apple-system,"PingFang SC",sans-serif',
         wenkai: '"MoYu WenKai","PingFang SC",serif',
-        wenkaigb: '"MoYu WenKai GB","PingFang SC",serif',
+        wenkaigb: '"MoYu WenKai","PingFang SC",serif',
         song: '"Songti SC","SimSun",serif',
+        shr: '"MoYu Serif SC","Songti SC",serif',
+        'shr-b': '"MoYu Serif SC","Songti SC",serif',
+        'shr-l': '"MoYu Serif SC","Songti SC",serif',
+        shs: '"MoYu Sans SC","PingFang SC",sans-serif',
+        'shs-b': '"MoYu Sans SC","PingFang SC",sans-serif',
+        'shs-l': '"MoYu Sans SC","PingFang SC",sans-serif',
         kai: '"Kaiti SC","STKaiti",serif',
         yuan: '"Yuanti SC","PingFang SC",sans-serif',
         round: '"Hiragino Maru Gothic ProN","PingFang SC",sans-serif'
