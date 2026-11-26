@@ -737,18 +737,19 @@
     if (title) title.textContent = (S.book && S.book.name) || '阅读';
 
     const pw = p.w || 794;
-    // 让文档宽度铺满屏幕可用宽度，而不是固定 1024 留黑边
+    // 让 iframe 的实际宽度 = 屏幕宽度，HTML 的响应式布局（如左目录+右正文）才能按真实 iPad 宽度渲染
+    // 之前用 scale 缩放 1024 宽的 iframe，iframe 内部视口仍是 1024，会触发窄屏单列布局、丢掉目录栏
     const avail = window.innerWidth - 24;
-    readerScale = avail / pw;
+    readerScale = 1;   // 不缩放，iframe 直接用真实宽度
     readerStartY = p.sliceTop || 0;
     readerScrolled = false;
 
-    frame.style.width = pw + 'px';
-    frame.style.transform = 'scale(' + readerScale + ')';
+    frame.style.width = avail + 'px';
+    frame.style.transform = 'none';
     frame.style.transformOrigin = '0 0';
     frame.style.height = '200px';
     docBox.style.height = '200px';
-    docBox.style.width = Math.ceil(pw * readerScale) + 'px';
+    docBox.style.width = avail + 'px';
     if (scroll) scroll.scrollTop = 0;
 
     readerOpen = true;
@@ -777,12 +778,12 @@
     } catch (e) { }
     if (!h || h < 40) return;
     frame.style.height = h + 'px';
-    docBox.style.height = Math.ceil(h * readerScale) + 'px';
+    docBox.style.height = h + 'px';
     if (!readerScrolled) {
       readerScrolled = true;
       const sc = A.$('#readerScroll');
       if (sc && readerStartY > 0) {
-        sc.scrollTop = Math.max(0, readerStartY * readerScale - 8);
+        sc.scrollTop = Math.max(0, readerStartY - 8);
       }
     }
   }
@@ -797,7 +798,7 @@
     try { el = doc.getElementById(name) || doc.getElementsByName(name)[0] || null; } catch (e) { el = null; }
     if (!el) return;
     const y = el.getBoundingClientRect().top;   // iframe 未内滚，即文档内偏移
-    sc.scrollTo({ top: Math.max(0, y * readerScale - 12), behavior: 'smooth' });
+    sc.scrollTo({ top: Math.max(0, y - 12), behavior: 'smooth' });
   }
 
   function closeReader() {    const ov = A.$('#reader'), frame = A.$('#readerFrame');
