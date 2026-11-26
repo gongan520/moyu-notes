@@ -207,6 +207,12 @@
     D.docTitle.value = book.name || '未命名';
     await loadPage(0, true);
     requestAnimationFrame(() => {
+      // HTML 笔记默认直接进「全屏阅读模式」，铺满屏幕（对齐浏览器/Notability 的连续阅读体验）
+      if (book.isHtml) {
+        openReader();
+        S.ready = true;
+        return;
+      }
       fitPage();   // 整页铺满屏幕（原来只贴宽度，导致上下留大片黑边）
       S.ready = true;
       const tip = S.pages.length > 1
@@ -731,14 +737,18 @@
     if (title) title.textContent = (S.book && S.book.name) || '阅读';
 
     const pw = p.w || 794;
-    readerScale = Math.min(1, (window.innerWidth - 2) / pw);
+    // 让文档宽度铺满屏幕可用宽度，而不是固定 1024 留黑边
+    const avail = window.innerWidth - 24;
+    readerScale = avail / pw;
     readerStartY = p.sliceTop || 0;
     readerScrolled = false;
 
     frame.style.width = pw + 'px';
     frame.style.transform = 'scale(' + readerScale + ')';
+    frame.style.transformOrigin = '0 0';
     frame.style.height = '200px';
     docBox.style.height = '200px';
+    docBox.style.width = Math.ceil(pw * readerScale) + 'px';
     if (scroll) scroll.scrollTop = 0;
 
     readerOpen = true;
