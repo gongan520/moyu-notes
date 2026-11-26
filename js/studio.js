@@ -47,7 +47,7 @@
     lassoMode: 'freeform',
     twoFinger: null,      // 双指轻点撤销的计时状态
     penSeen: false,
-    penOnly: true,
+    penOnly: false,   // false = 手指也能写字（原 true 导致碰过笔后手指只能平移不能写）
     pointers: new Map(),
     mode: null,
     stroke: null,
@@ -126,7 +126,8 @@
   }
 
   function blankPage(bookId, order, preset) {
-    const p = preset || PAGE_PRESETS[0];
+    // 没指定纸张时，按当前屏幕方向智能选，让纸张铺满屏幕（对齐 Notability）
+    const p = preset || autoPreset();
     return {
       id: A.uid('pg'),
       bookId: bookId,
@@ -141,6 +142,18 @@
       texts: [],
       images: []
     };
+  }
+
+  // 让纸张宽高比精确匹配当前屏幕可用区域，铺满整屏（对齐 Notability 无边距体验）
+  function autoPreset() {
+    const vw = window.innerWidth || 1024;
+    const vh = window.innerHeight || 768;
+    // 顶部栏约 60px + 底部工具坞约 100px，纸张填满这两者之间
+    const availW = Math.max(600, vw - 8);
+    // 横屏时工具坞更矮（约 88px），竖屏时更高（约 100px），据此估算
+    const chrome = vw >= vh ? 148 : 160;
+    const availH = Math.max(500, vh - chrome);
+    return { id: 'auto', w: Math.round(availW), h: Math.round(availH) };
   }
 
   function htmlPage(bookId, order, srcKey, sliceTop, sliceH, totalH) {
@@ -194,7 +207,7 @@
     D.docTitle.value = book.name || '未命名';
     await loadPage(0, true);
     requestAnimationFrame(() => {
-      fitWidth();
+      fitPage();   // 整页铺满屏幕（原来只贴宽度，导致上下留大片黑边）
       S.ready = true;
       const tip = S.pages.length > 1
         ? '双指缩放 · 两指拖动移动画面 · 两侧箭头翻页'
@@ -946,7 +959,7 @@
   function fitWidth(instant) {
     const { w } = pageSize();
     const r = stageRect();
-    const pad = 34;
+    const pad = 12;   // 减小留白，让纸张尽量贴满屏幕
     const s = A.clamp((r.width - pad * 2) / w, 0.2, 3);
     S.view.scale = s;
     S.view.x = (r.width - w * s) / 2;
@@ -959,7 +972,7 @@
   function fitPage() {
     const { w, h } = pageSize();
     const r = stageRect();
-    const pad = 30;
+    const pad = 12;   // 减小留白，让纸张尽量铺满屏幕
     const s = A.clamp(Math.min((r.width - pad * 2) / w, (r.height - pad * 2) / h), 0.15, 3);
     S.view.scale = s;
     S.view.x = (r.width - w * s) / 2;
