@@ -209,18 +209,19 @@
     D.docTitle.value = book.name || '未命名';
     await loadPage(0, true);
     requestAnimationFrame(() => {
-      // HTML 笔记默认进「编辑模式」：HTML 作为底稿背景铺满，可在上面直接手写批注
-      // （阅读模式改为用户手动点顶栏「阅读」进入，纯看时才用）
-      fitPage();   // 整页铺满屏幕
-      S.ready = true;
+      // HTML 笔记默认直接进「阅读模式」：原始 HTML 连续显示（不分页切割），
+      // 左侧目录可点跳转，顶部工具条可直接手写批注
       if (book.isHtml) {
-        showHint('可直接手写批注 · 点顶栏「阅读」切换纯阅读', 3400);
-      } else {
-        const tip = S.pages.length > 1
-          ? '双指缩放 · 两指拖动移动画面 · 两侧箭头翻页'
-          : '双指缩放 · 两指拖动移动画面';
-        setTimeout(() => showHint(tip, 3400), 500);
+        openReader();
+        S.ready = true;
+        return;
       }
+      fitPage();   // 空白笔记：整页铺满屏幕
+      S.ready = true;
+      const tip = S.pages.length > 1
+        ? '双指缩放 · 两指拖动移动画面 · 两侧箭头翻页'
+        : '双指缩放 · 两指拖动移动画面';
+      setTimeout(() => showHint(tip, 3400), 500);
     });
   }
 
@@ -457,7 +458,7 @@
 
   /* ───── 阅读模式手写批注 ───── */
   let rInk = null, rInkCtx = null, rTool = 'pen';
-  let rStrokes = [];        // 已完成笔迹 [{tool,color,size,pts}]
+  let rStrokes = [];        // 已完成笔迹 [{tool,color,size,pts}]（内容坐标，持久化到 S.page.readerStrokes）
   let rCur = null;          // 当前绘制中
   let rUndoStack = [];
 
@@ -467,6 +468,9 @@
     rInkCtx = rInk.getContext('2d');
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     rInk._dpr = dpr;
+    // 从页面加载已保存的批注（HTML 全文批注统一挂在第一页）
+    const base = (S.pages && S.pages[0]) || S.page;
+    rStrokes = (base && base.readerStrokes) || [];
     bindReaderInk();
     // iframe 滚动时，笔迹（内容坐标）要跟着内容一起走 → 重绘
     const frame = A.$('#readerFrame');
@@ -556,10 +560,15 @@
     rInk.addEventListener('pointerdown', (e) => {
       if (rTool === 'undo') return;
       const pt = readerPoint(e);
+      if (rTool === 'eraser') {
+        // 橡皮：点到哪笔删哪笔（整笔删除）
+        eraseReaderStrokeAt(pt);
+        return;
+      }
       rCur = {
         tool: rTool,
         color: S.color || '#1c1c1e',
-        size: rTool === 'marker' ? 14 : (rTool === 'eraser' ? 24 : Math.max(2.5, S.size || 3)),
+        size: rTool === 'marker' ? 14 : Math.max(2.5, S.size || 3),
         pts: [pt]
       };
       try { rInk.setPointerCapture(e.pointerId); } catch (err) { }
@@ -568,16 +577,20 @@
     });
     rInk.addEventListener('pointermove', (e) => {
       if (!rCur) return;
+      if (rCur.tool === 'eraser') { eraseReaderStrokeAt(readerPoint(e)); return; }
       rCur.pts.push(readerPoint(e));
       repaintReaderInk();
       e.preventDefault();
     });
     rInk.addEventListener('pointerup', (e) => {
       if (!rCur) return;
-      if (rCur.pts.length === 1) {
-        rCur.pts.push({ x: rCur.pts[0].x + 0.1, y: rCur.pts[0].y + 0.1 });
+      if (rCur.tool !== 'eraser') {
+        if (rCur.pts.length === 1) {
+          rCur.pts.push({ x: rCur.pts[0].x + 0.1, y: rCur.pts[0].y + 0.1 });
+        }
+        rStrokes.push(rCur);
+        saveReaderStrokes();
       }
-      rStrokes.push(rCur);
       rCur = null;
       repaintReaderInk();
       e.preventDefault();
@@ -585,9 +598,32 @@
     rInk.addEventListener('pointercancel', () => { rCur = null; });
   }
 
+  // 橡皮整笔删除：命中即删
+  function eraseReaderStrokeAt(pt) {
+    for (let i = rStrokes.length - 1; i >= 0; i--) {
+      const s = rStrokes[i];
+      const tol = (s.size || 3) * 0.5 + 8;
+      if (A.Ink && A.Ink.strokeHit(s, pt.x, pt.y, tol)) {
+        rStrokes.splice(i, 1);
+        saveReaderStrokes();
+        repaintReaderInk();
+        return;
+      }
+    }
+  }
+
+  function saveReaderStrokes() {
+    const base = (S.pages && S.pages[0]) || S.page;
+    if (base) {
+      base.readerStrokes = rStrokes.slice();
+      markDirty();
+    }
+  }
+
   function setReaderTool(t) {
     if (t === 'undo') {
       rStrokes.pop();
+      saveReaderStrokes();
       repaintReaderInk();
       return;
     }
@@ -935,6 +971,12 @@
   function closeReader() {    const ov = A.$('#reader'), frame = A.$('#readerFrame');
     readerOpen = false;
     readerScrolled = false;
+    // 批注挂第一页，若当前页不是第一页，这里补保存一次
+    const base = (S.pages && S.pages[0]);
+    if (base && base.readerStrokes && base !== S.page) {
+      const copy = Object.assign({}, base, { readerStrokes: base.readerStrokes });
+      A.db.savePage(copy).catch(() => {});
+    }
     if (ov) { ov.hidden = true; ov.classList.remove('is-on'); }
     if (frame) frame.srcdoc = '<!doctype html><html><body style="background:#fff"></body></html>';
   }
@@ -3032,6 +3074,7 @@
       heading: p.heading, headingLevel: p.headingLevel,
       layers: p.layers || null,
       rec: p.rec || null,
+      readerStrokes: p.readerStrokes || null,
       strokes: (p.strokes || []).map(slimStroke),
       texts: p.texts || [],
       images: (p.images || []).map(im => ({ id: im.id, src: im.src, x: im.x, y: im.y, w: im.w, h: im.h }))
