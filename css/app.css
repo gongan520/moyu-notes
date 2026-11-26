@@ -328,8 +328,8 @@ svg{ display:block; }
 }
 .page .layer{ position:absolute; left:0; top:0; }
 #paperCanvas{ display:block; }
-#inkBase,#inkLive{ display:block; pointer-events:none; }
-#inkLive{ z-index:6; }
+#inkBase,#inkLive{ display:block; pointer-events:none; will-change:transform; }
+#inkLive{ z-index:6; will-change:transform; }
 #inkBase{ z-index:5; }
 #laserCv{ display:block; pointer-events:none; z-index:6; }
 .htmlwrap{

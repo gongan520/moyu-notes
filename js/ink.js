@@ -38,6 +38,22 @@
     return out;
   }
 
+  /* 轻量坐标平滑：避免高频手抖导致线条锯齿，同时不引入明显延迟 */
+  function smoothXY(pts, alpha) {
+    alpha = alpha == null ? 0.55 : alpha;
+    const n = pts.length;
+    if (n < 3) return pts;
+    let sx = pts[0].x, sy = pts[0].y;
+    for (let i = 1; i < n; i++) {
+      const p = pts[i];
+      p.x = sx + alpha * (p.x - sx);
+      p.y = sy + alpha * (p.y - sy);
+      sx = p.x;
+      sy = p.y;
+    }
+    return pts;
+  }
+
   /* 原始点 → 密集平滑点 */
   function densify(raw, step) {
     step = step || SAMPLE_STEP;
@@ -61,6 +77,22 @@
       };
     }
     return out;
+  }
+
+  /* 增量松弛：只平滑新增的一段，避免整笔重复遍历 */
+  function relaxRange(pts, from) {
+    const n = pts.length;
+    const start = Math.max(1, from);
+    if (n - start < 3) return pts;
+    for (let i = start; i < n - 1; i++) {
+      const a = pts[i - 1], b = pts[i], c = pts[i + 1];
+      pts[i] = {
+        x: a.x * 0.2 + b.x * 0.6 + c.x * 0.2,
+        y: a.y * 0.2 + b.y * 0.6 + c.y * 0.2,
+        p: a.p * 0.2 + b.p * 0.6 + c.p * 0.2
+      };
+    }
+    return pts;
   }
 
   function densifyRaw(raw, step) {
@@ -472,7 +504,27 @@
       if (d < MIN_RAW_STEP) return false;
     }
     pts.push(pt);
+    // 增量平滑：只松弛新增部分，避免整笔重复计算
+    if (pts.length > 4) relaxRange(pts, pts.length - 2);
     return true;
+  }
+
+  /* ───── 高频采样：合并 coalesced events 获取更精细笔迹 ───── */
+  function appendCoalesced(stroke, e, transformFn) {
+    let events = [e];
+    try {
+      if (e.getCoalescedEvents) {
+        const list = e.getCoalescedEvents();
+        if (list && list.length > 1) events = list;
+      }
+    } catch (err) { }
+    let added = 0;
+    for (const ev of events) {
+      const raw = { x: ev.clientX, y: ev.clientY, p: ev.pressure || 0.5 };
+      const pt = transformFn ? transformFn(raw) : raw;
+      if (addPoint(stroke, pt)) added++;
+    }
+    return added;
   }
 
   /* ───── 包围盒 ───── */
@@ -557,8 +609,8 @@
   }
 
   A.Ink = {
-    densify, smoothPressure, drawStroke, drawAll, drawPartial,
-    addPoint, bboxOf, strokeHit, strokeInPoly, strokeInRect, pointInPoly, fillRibbon, drawShape, shapeOutline,
+    densify, smoothPressure, smoothXY, drawStroke, drawAll, drawPartial,
+    addPoint, appendCoalesced, bboxOf, strokeHit, strokeInPoly, strokeInRect, pointInPoly, fillRibbon, drawShape, shapeOutline,
     recognizeShape, rdpSimplify, polygonArea,
     SAMPLE_STEP
   };

@@ -1618,10 +1618,14 @@
     }
 
     if (S.mode === 'draw' && S.stroke) {
-      const pt = toPage(e.clientX, e.clientY);
-      // 预测点只用来"提前画"，但它会落进笔迹数据，收笔时多出一小段甩尾尖刺
-      appendPoint(S.stroke, pt, e.pressure);
-      paintLive(S.stroke);
+      const s = S.stroke;
+      // 合并 coalesced events：60Hz 显示器上拿到更密集的笔迹点，显著提升丝滑度
+      const added = appendCoalesced(s, e);
+      if (!added) {
+        const pt = toPage(e.clientX, e.clientY);
+        appendPoint(s, pt, e.pressure);
+      }
+      paintLive(s);
       return;
     }
 
@@ -1913,6 +1917,18 @@
     const q = (S.ruler.on && s && s._rl) ? snapToRuler(pt, true) : (S.ruler.on ? snapToRuler(pt) : pt);
     A.Ink.addPoint(s, { x: q.x, y: q.y, p: p });
     s._sm = null;
+  }
+
+  function appendCoalesced(s, e) {
+    const toPagePt = (raw) => {
+      const pt = toPage(raw.x, raw.y);
+      const q = (S.ruler.on && s._rl) ? snapToRuler(pt, true) : (S.ruler.on ? snapToRuler(pt) : pt);
+      const p = A.clamp(raw.p || e.pressure || 0.5, 0.05, 1);
+      return { x: q.x, y: q.y, p: p };
+    };
+    const added = A.Ink.appendCoalesced(s, e, toPagePt);
+    if (added) s._sm = null;
+    return added;
   }
 
   /* ═════════════ 标尺 ═════════════ */
