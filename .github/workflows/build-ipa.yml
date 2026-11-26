@@ -16,8 +16,8 @@ concurrency:
 
 jobs:
   build:
-    # macos-15 是 arm64 托管机，AirPodsTracker 项目验证过构建成功且速度快
-    runs-on: macos-15
+    # macos-latest 是最快拿到 runner 的选择，course_helper_ios 项目今天验证过构建成功
+    runs-on: macos-latest
     timeout-minutes: 40
 
     steps:
