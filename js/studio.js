@@ -47,7 +47,7 @@
     lassoMode: 'freeform',
     twoFinger: null,      // 双指轻点撤销的计时状态
     penSeen: false,
-    penOnly: false,   // false = 手指也能写字（原 true 导致碰过笔后手指只能平移不能写）
+    penOnly: true,   // true = 只有触控笔能写字，手指只做平移/手势
     pointers: new Map(),
     mode: null,
     stroke: null,
@@ -203,6 +203,8 @@
     D.viewLib.classList.remove('is-active');
     D.viewStu.classList.add('is-active');
     document.body.classList.add('in-studio');
+    // Notability 式：工具坞默认收起，只留右下角小把手，纸张铺满
+    D.dock.classList.add('is-collapsed');
 
     D.docTitle.value = book.name || '未命名';
     await loadPage(0, true);
@@ -1268,7 +1270,8 @@
   }
 
   function isTouchPan(e) {
-    return e.pointerType === 'touch' && S.penOnly && S.penSeen;
+    // 手指触屏一律当「平移画面」，只有触控笔(pen)才能写字
+    return e.pointerType === 'touch';
   }
 
   function onPointerDown(e) {

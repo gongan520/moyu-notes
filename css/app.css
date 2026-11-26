@@ -1814,3 +1814,32 @@ html[data-theme="light"] .lookup{ background:rgba(255,255,255,.97); }
   border-radius:18px;
   box-shadow:0 12px 38px rgba(0,0,0,.45);
 }
+
+/* ══════════════════════════════════════════════════════════
+   Notability 极致简洁：底部工具坞默认收起，只剩右下角小把手
+   ══════════════════════════════════════════════════════════ */
+/* 折叠态：dock 只占右下角一个小圆钮 */
+.view--studio .dock.is-collapsed{
+  position:absolute; left:auto; right:16px; bottom:calc(var(--safe-b) + 16px);
+  width:52px; padding:0; background:none; border:none;
+}
+.view--studio .dock.is-collapsed .dock-panel{
+  max-height:0; opacity:0; overflow:hidden; padding:0; margin:0;
+}
+/* 折叠态下，把手变成醒目的圆形画笔按钮 */
+.view--studio .dock.is-collapsed .dock-toggle{
+  position:static; transform:none; width:52px; height:52px;
+  border-radius:50%;
+  background:var(--accent); color:var(--accent-ink);
+  display:grid; place-items:center;
+  box-shadow:0 6px 20px rgba(0,0,0,.45);
+}
+.view--studio .dock.is-collapsed .dock-toggle .ico{
+  width:24px; height:24px; transform:rotate(180deg);
+}
+/* 展开态：把手回到顶部居中，收起箭头 */
+.view--studio .dock:not(.is-collapsed) .dock-toggle{
+  position:absolute; top:-22px; left:50%; transform:translateX(-50%);
+  width:36px; height:20px; border-radius:99px;
+  background:rgba(22,22,27,.85); color:var(--tx-2);
+}
