@@ -1,0 +1,66 @@
+# 墨屿 — Cirrus CI 构建未签名 ipa
+# 独立于 GitHub Actions 的免费 macOS runner，排队远快于 GitHub
+# 用法：首次需在 https://cirrus-ci.com 用 GitHub 账号授权本仓库，
+#       之后每次 push 到 main / tag 自动构建并发布到 GitHub "latest" Release
+task:
+  name: Build unsigned IPA
+  only_if: $CIRRUS_BRANCH == 'main' || $CIRRUS_TAG != ''
+  macos_instance:
+    image: ghcr.io/cirruslabs/macos-sonoma-xcode:latest
+
+  env:
+    matrix:
+      # 与 GitHub workflow 保持一致
+      CODE_SIGNING_ALLOWED: "NO"
+      CODE_SIGNING_REQUIRED: "NO"
+
+  install_xcodegen_script:
+    - brew install xcodegen || true
+    - xcodegen --version || true
+
+  generate_project_script:
+    - cd ios
+    - xcodegen generate
+
+  build_script:
+    - cd ios
+    - set -euo pipefail
+    - xcodebuild \
+        -project MoYu.xcodeproj \
+        -scheme MoYu \
+        -configuration Release \
+        -sdk iphoneos \
+        -derivedDataPath build \
+        -quiet \
+        CURRENT_PROJECT_VERSION="$CIRRUS_BUILD_ID" \
+        CODE_SIGNING_ALLOWED=NO \
+        CODE_SIGNING_REQUIRED=NO \
+        CODE_SIGN_IDENTITY="" \
+        CODE_SIGN_ENTITLEMENTS="" \
+        build
+
+  package_script:
+    - set -euo pipefail
+    - APP="ios/build/Build/Products/Release-iphoneos/MoYu.app"
+    - test -d "$APP" || (echo "构建产物不存在"; find ios/build/Build/Products -maxdepth 3 -name "*.app" || true; exit 1)
+    - rm -rf out && mkdir -p out/Payload
+    - cp -R "$APP" out/Payload/
+    - cd out
+    - zip -qry MoYu-unsigned.ipa Payload
+    - ls -lh MoYu-unsigned.ipa
+
+  # 上传到 GitHub "latest" Release（需 CIRRUS_REPO_CLONE_TOKEN 或 GH_TOKEN 环境变量）
+  upload_script:
+    - set -euo pipefail
+    - if [ -z "${GH_TOKEN:-}" ]; then echo "跳过发布：未设置 GH_TOKEN"; exit 0; fi
+    - APP="ios/build/Build/Products/Release-iphoneos/MoYu.app"
+    - VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Info.plist")
+    - SIZE=$(du -h out/MoYu-unsigned.ipa | cut -f1)
+    - gh release view latest --repo "$CIRRUS_REPO_FULL_NAME" >/dev/null 2>&1 || gh release create latest --repo "$CIRRUS_REPO_FULL_NAME" --title "墨屿 · 最新构建" --notes "未签名 ipa，见 README 安装说明"
+    - gh release upload latest out/MoYu-unsigned.ipa --repo "$CIRRUS_REPO_FULL_NAME" --clobber
+    - echo "已发布 v${VER} (${SIZE}) 到 latest Release"
+
+  artifacts:
+    path: out/MoYu-unsigned.ipa
+    type: application/octet-stream
+    name: MoYu-unsigned.ipa
