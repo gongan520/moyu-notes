@@ -1,5 +1,5 @@
 /* 墨屿 — service worker（离线可用） */
-const CACHE = 'moyu-v6';
+const CACHE = 'moyu-v7';
 const ASSETS = [
   './',
   './index.html',

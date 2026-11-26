@@ -431,9 +431,22 @@
     return inside > 0 && inside === pts.length;
   }
 
+  /* 笔画是否落在矩形套索内 */
+  function strokeInRect(s, r) {
+    const pts = (s.tool === 'shape') ? shapeOutline(s)
+      : (s._sm && s._sm.length ? s._sm : s.pts);
+    if (!pts || !pts.length) return false;
+    let inside = 0;
+    for (const p of pts) {
+      if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) inside++;
+    }
+    if (inside / pts.length > 0.35) return true;
+    return inside > 0 && inside === pts.length;
+  }
+
   A.Ink = {
     densify, smoothPressure, drawStroke, drawAll, drawPartial,
-    addPoint, bboxOf, strokeHit, strokeInPoly, pointInPoly, fillRibbon, drawShape, shapeOutline,
+    addPoint, bboxOf, strokeHit, strokeInPoly, strokeInRect, pointInPoly, fillRibbon, drawShape, shapeOutline,
     SAMPLE_STEP
   };
 })(window.MY);

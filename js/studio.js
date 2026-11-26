@@ -44,6 +44,8 @@
     kind: 'fountain',
     shape: 'rect',
     eraserMode: 'pixel',
+    lassoMode: 'freeform',
+    twoFinger: null,      // 双指轻点撤销的计时状态
     penSeen: false,
     penOnly: true,
     pointers: new Map(),
@@ -1015,6 +1017,14 @@
 
   function setTool(t) {
     if (t === S.tool && t !== 'image' && t !== 'text') {
+      // 套索：再点一次在「自由 / 矩形」间切换（Notability 同款操作）
+      if (t === 'lasso') {
+        S.lassoMode = S.lassoMode === 'freeform' ? 'rect' : 'freeform';
+        const btn = A.$$('.tool[data-tool="lasso"] span', D.toolRow)[0];
+        if (btn) btn.textContent = S.lassoMode === 'rect' ? '矩形框选' : '套索';
+        showHint(S.lassoMode === 'rect' ? '矩形套索：拖出方框选中内容' : '自由套索：随手圈选内容');
+        return;
+      }
       // 再点一次已选中的工具：收起/展开笔刷设置
       if (A.sheet.isOpen()) A.sheet.close();
       else openToolOptions(t);
@@ -1242,8 +1252,10 @@
     S.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     if (e.pointerType === 'pen') S.penSeen = true;
 
-    // 两指 → 手势
+    // 两指 → 手势（先记录双指落下时间/位置，用于区分「双指轻点撤销」和「双指捏合缩放」）
     if (S.pointers.size === 2) {
+      const arr = Array.from(S.pointers.values());
+      S.twoFinger = { t: Date.now(), x: (arr[0].x + arr[1].x) / 2, y: (arr[0].y + arr[1].y) / 2, moved: false };
       beginGesture();
       return;
     }
@@ -1413,6 +1425,14 @@
 
     if (S.gesture) {
       if (S.pointers.size < 2) {
+        // 双指几乎同时落下、很快抬起、且几乎没移动 → 双指轻点 = 撤销（Notability 标志性手势）
+        const tf = S.twoFinger;
+        const dt = tf ? Date.now() - tf.t : Infinity;
+        if (tf && !tf.moved && dt < 320) {
+          undo();
+          if (A.haptic) A.haptic(8);
+        }
+        S.twoFinger = null;
         S.gesture = null;
         clampView();
         scheduleQuality();
@@ -1456,7 +1476,7 @@
 
   function onPointerCancel(e) {
     S.pointers.delete(e.pointerId);
-    if (S.gesture) { S.gesture = null; return; }
+    if (S.gesture) { S.gesture = null; S.twoFinger = null; return; }
     if (S.stroke && S.mode === 'shape') { S.stroke = null; clearLive(); }
     S.mode = null; S.drawId = null;
   }
@@ -1486,6 +1506,8 @@
     const d = Math.hypot(b.x - a.x, b.y - a.y);
     const r = stageRect();
     const s = A.clamp(S.gesture.s0 * (d / S.gesture.d0), 0.15, 6);
+    // 双指移动超过阈值 → 判定为缩放，取消「双指轻点撤销」候选
+    if (S.twoFinger && Math.abs(d - S.gesture.d0) > 4) S.twoFinger.moved = true;
     S.view.scale = s;
     S.view.x = (mid.x - r.left) - S.gesture.px * s;
     S.view.y = (mid.y - r.top) - S.gesture.py * s;
@@ -1803,6 +1825,7 @@
   function startLasso(pt) {
     S.mode = 'lasso';
     S.lassoPts = [pt];
+    S.lassoStart = pt;
     cancelSelection();
     drawLasso();
   }
@@ -1810,6 +1833,14 @@
   function drawLasso() {
     const pts = S.lassoPts || [];
     if (pts.length < 2) { D.selSvg.innerHTML = ''; return; }
+    if (S.lassoMode === 'rect') {
+      const a = S.lassoStart, b = pts[pts.length - 1];
+      const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+      const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+      D.selSvg.innerHTML = '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h +
+        '" fill="rgba(224,178,99,.10)" stroke="#e0b263" stroke-width="1.4" stroke-dasharray="5 4" />';
+      return;
+    }
     let d = 'M' + pts[0].x + ' ' + pts[0].y;
     for (let i = 1; i < pts.length; i++) d += ' L' + pts[i].x + ' ' + pts[i].y + '';
     D.selSvg.innerHTML = '<path d="' + d + '" fill="rgba(224,178,99,.10)" stroke="#e0b263" stroke-width="1.4" stroke-dasharray="5 4" />';
@@ -1819,10 +1850,20 @@
     const poly = S.lassoPts || [];
     D.selSvg.innerHTML = '';
     S.lassoPts = null;
-    if (poly.length < 3) { S.mode = null; return; }
-    const hits = S.page.strokes.filter(s => s.tool !== 'eraser' && A.Ink.strokeInPoly(s, poly));
-    if (!hits.length) { A.toast('没有选中笔迹'); S.mode = null; return; }
-    S.sel = { strokes: hits, bbox: A.Ink.bboxOf(hits, 8), poly: poly, angle: 0 };
+    if (poly.length < 3 && S.lassoMode !== 'rect') { S.mode = null; return; }
+    if (S.lassoMode === 'rect' && poly.length < 2) { S.mode = null; return; }
+    let hits;
+    if (S.lassoMode === 'rect') {
+      const a = S.lassoStart, b = poly[poly.length - 1];
+      const r = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+      hits = S.page.strokes.filter(s => s.tool !== 'eraser' && A.Ink.strokeInRect(s, r));
+      if (!hits.length) { A.toast('没有选中笔迹'); S.mode = null; return; }
+      S.sel = { strokes: hits, bbox: A.Ink.bboxOf(hits, 8), poly: null, angle: 0 };
+    } else {
+      hits = S.page.strokes.filter(s => s.tool !== 'eraser' && A.Ink.strokeInPoly(s, poly));
+      if (!hits.length) { A.toast('没有选中笔迹'); S.mode = null; return; }
+      S.sel = { strokes: hits, bbox: A.Ink.bboxOf(hits, 8), poly: poly, angle: 0 };
+    }
     drawSelectionBox();
     showCtxFloat();
     S.mode = null;
